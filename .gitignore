@@ -4,4 +4,4 @@ dist/
 .vs/
 *.user
 *.suo
-.vscode/
+.vscode
