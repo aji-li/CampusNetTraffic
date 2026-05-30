@@ -46,12 +46,13 @@ CampusNetTraffic 是一个面向 Windows 的校园网流量助手，主要用于
 - WebView2 Runtime
 
 ## 使用方式
-
-1. 打开程序
-2. 点击“网页登录”并在内嵌页面完成校园网登录
-3. 登录成功后点击“同步校园网”
-4. 之后可以直接查看流量、余额、套餐和在线设备
-
+使用方法：
+1. 下载并解压压缩包
+2. 运行 CampusNetTraffic.exe
+3. 点击“网页登录”并在内嵌页面完成校园网登录
+4. 登录成功后点击“同步校园网”
+5. 之后可以直接查看流量、余额、套餐和在线设备
+注意：程序仅适用于 Windows。
 ## 发布说明
 
 如果你从 GitHub Releases 下载，通常只需要解压后运行生成的主程序即可。若你自己本地发布，可以使用下面的命令：
@@ -64,27 +65,6 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 
 ```text
 dist\CampusNetTraffic.exe
-```
-
-## GitHub Releases 建议
-
-你上传到 GitHub 时，建议至少提供下面这些内容：
-
-- `CampusNetTraffic-win-x64.zip`：发布后的完整压缩包
-- `README.md`：项目说明
-- `Release notes`：简单写清楚本次更新内容
-
-可以直接使用下面这段作为 Releases 说明：
-
-```text
-CampusNetTraffic Windows 发布版
-
-使用方法：
-1. 下载并解压压缩包
-2. 运行 CampusNetTraffic.exe
-3. 使用校园网账号登录后点击“同步校园网”
-
-注意：程序仅适用于 Windows。
 ```
 
 ## 开发
