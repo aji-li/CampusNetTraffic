@@ -27,10 +27,17 @@ CampusNetTraffic 是一个面向 Windows 的校园网流量助手，主要用于
 ## 项目截图
 
 后续可以在这里放程序主界面、登录页、流量统计和在线设备列表的截图。
+### 主页面
+![主界面](Assets/main.png)
+### 登录页
+![登录页](Assets/login.png)
+### 流量统计
+![流量统计](Assets/traffic.png)
+### 在线设备
+![在线设备](Assets/devices.png)
+### 后台占用
+![后台占用](Assets/use.png)
 
-```text
-![alt text](image.png)
-```
 
 ## 运行环境
 
