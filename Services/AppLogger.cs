@@ -29,6 +29,11 @@ public sealed class AppLogger
 
     public string ExportToDesktop()
     {
+        if (!File.Exists(_logPath))
+        {
+            File.WriteAllText(_logPath, string.Empty);
+        }
+
         var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         var exportPath = Path.Combine(desktop, $"CampusNetTraffic-log-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
         File.Copy(_logPath, exportPath, overwrite: true);

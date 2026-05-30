@@ -1,0 +1,102 @@
+<Window x:Class="CampusNetTraffic.MiniTrafficWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        SizeToContent="WidthAndHeight"
+        MinHeight="34"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Topmost="True"
+        AllowsTransparency="True"
+        Background="Transparent"
+        SnapsToDevicePixels="True"
+        UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Display"
+        TextOptions.TextRenderingMode="ClearType">
+    <Window.Resources>
+        <DropShadowEffect x:Key="TextShadow" BlurRadius="3" ShadowDepth="1" Opacity="0.75" Color="#000000" />
+        <Style x:Key="HudText" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Effect" Value="{StaticResource TextShadow}" />
+        </Style>
+        <Style x:Key="MutedHudText" TargetType="TextBlock" BasedOn="{StaticResource HudText}">
+            <Setter Property="Foreground" Value="#BFDBFE" />
+            <Setter Property="FontSize" Value="12.5" />
+        </Style>
+        <Style x:Key="CloseButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="#220F172A" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="BorderBrush" Value="#668BA3C7" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="FontSize" Value="17" />
+            <Setter Property="FontWeight" Value="Normal" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Opacity" Value="0.75" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="8">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#33FFFFFF" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="#AAFFFFFF" />
+                                <Setter Property="Opacity" Value="1" />
+                                <Setter Property="Foreground" Value="#FCA5A5" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="Opacity" Value="0.55" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Border Background="#180F172A"
+            BorderBrush="#553B82F6"
+            BorderThickness="1"
+            CornerRadius="8"
+            Padding="8,3,5,3"
+            MouseLeftButtonDown="MiniWindow_MouseLeftButtonDown">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="14" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="14" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="14" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="24" />
+        </Grid.ColumnDefinitions>
+
+        <TextBlock Grid.Column="0" Text="本次" Style="{StaticResource MutedHudText}" Margin="0,0,6,0" />
+        <TextBlock Grid.Column="1" x:Name="UsageText" Text="0 MB" Style="{StaticResource HudText}" FontSize="16" FontWeight="Bold" />
+
+        <TextBlock Grid.Column="2" Text="|" Style="{StaticResource MutedHudText}" HorizontalAlignment="Center" Opacity="0.75" />
+
+        <TextBlock Grid.Column="3" x:Name="DownloadText" Text="↓ 0 KB/s" Style="{StaticResource HudText}" />
+
+        <TextBlock Grid.Column="4" Text="|" Style="{StaticResource MutedHudText}" HorizontalAlignment="Center" Opacity="0.75" />
+
+        <TextBlock Grid.Column="5" x:Name="UploadText" Text="↑ 0 KB/s" Style="{StaticResource HudText}" />
+
+        <TextBlock Grid.Column="6" Text="|" Style="{StaticResource MutedHudText}" HorizontalAlignment="Center" Opacity="0.75" />
+
+        <TextBlock Grid.Column="7" Text="CAUCNet" Style="{StaticResource MutedHudText}" FontWeight="Bold" />
+
+        <Button Grid.Column="8" Content="×" Width="22" Height="22" Style="{StaticResource CloseButtonStyle}" Click="CloseButton_Click" />
+    </Grid>
+    </Border>
+</Window>
