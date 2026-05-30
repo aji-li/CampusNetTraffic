@@ -23,28 +23,7 @@ CAUCNet Traffic 是一个面向 Windows 的 CAUC 校园网流量助手，用于�
 
 > Windows 11 通常已经自带 WebView2 Runtime。如果打不开内嵌网页登录页，需要安装 Microsoft Edge WebView2 Runtime。
 
-## 给别人使用时发哪些文件
 
-最简单：只发这个文件即可：
-
-```text
-dist\CAUCNetTraffic.exe
-```
-
-不要发送这些文件/目录：
-
-```text
-dist\CAUCNetTraffic.pdb
-dist\CampusNetTraffic.exe.WebView2\
-dist\*.xml
-```
-
-说明：
-
-- `.pdb` 是调试符号，普通用户不需要。
-- `.xml` 是库文档文件，普通用户不需要。
-- `CampusNetTraffic.exe.WebView2` 是本机 WebView2 缓存/用户数据目录，不应该发给别人。
-- 如果使用 Syncfusion 图表并希望去掉授权提示，可把 `syncfusion-license.txt` 和 exe 放在同一个文件夹；也可以让用户放到 `%LOCALAPPDATA%\CampusNetTraffic\syncfusion-license.txt`。
 
 ## 使用方式
 
@@ -75,7 +54,6 @@ dist\*.xml
 - `traffic.db`：本机流量统计数据库
 - `app.log`：运行日志
 - `crash.log`：崩溃日志
-- `syncfusion-license.txt`：可选 Syncfusion 授权文件
 
 ## 开发与发布
 
