@@ -1,0 +1,13 @@
+{
+  "version": "1.0.0",
+  "releaseDate": "2026-06-02",
+  "installerUrl": "https://github.com/aji-li/CampusNetTraffic/releases/download/v1.0.0/CAUCNetTraffic-v1.0.0-Setup.exe",
+  "portableUrl": "https://github.com/aji-li/CampusNetTraffic/releases/download/v1.0.0/CAUCNetTraffic-v1.0.0.zip",
+  "notes": [
+    "新增中文安装包",
+    "新增首次使用引导",
+    "新增诊断包自动脱敏",
+    "优化图标透明背景",
+    "内置最新 Syncfusion 授权"
+  ]
+}
