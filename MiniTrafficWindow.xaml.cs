@@ -6,6 +6,7 @@ namespace CampusNetTraffic;
 public partial class MiniTrafficWindow : Window
 {
     public event EventHandler? UserClosedMiniWindow;
+    public event EventHandler? UserMovedMiniWindow;
 
     public MiniTrafficWindow()
     {
@@ -26,11 +27,18 @@ public partial class MiniTrafficWindow : Window
         Top = workArea.Bottom - Height - 18;
     }
 
+    public void SetSavedPosition(double left, double top)
+    {
+        Left = left;
+        Top = top;
+    }
+
     private void MiniWindow_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (e.ButtonState == MouseButtonState.Pressed)
         {
             DragMove();
+            UserMovedMiniWindow?.Invoke(this, EventArgs.Empty);
         }
     }
 

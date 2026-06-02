@@ -139,11 +139,11 @@
                         </StackPanel>
                     </Grid>
 
-                    <Button Content="总览" Style="{StaticResource NavButton}" Click="OverviewNav_Click" />
-                    <Button Content="校园网登录" Style="{StaticResource NavButton}" Click="LoginNav_Click" />
-                    <Button Content="在线设备" Style="{StaticResource NavButton}" Click="DevicesNav_Click" />
-                    <Button Content="历史统计" Style="{StaticResource NavButton}" Click="StatsNav_Click" />
-                    <Button Content="设置" Style="{StaticResource NavButton}" Click="SettingsNav_Click" />
+                    <Button x:Name="OverviewNavButton" Content="总览" Style="{StaticResource NavButton}" Click="OverviewNav_Click" />
+                    <Button x:Name="LoginNavButton" Content="校园网登录" Style="{StaticResource NavButton}" Click="LoginNav_Click" />
+                    <Button x:Name="DevicesNavButton" Content="在线设备" Style="{StaticResource NavButton}" Click="DevicesNav_Click" />
+                    <Button x:Name="StatsNavButton" Content="历史统计" Style="{StaticResource NavButton}" Click="StatsNav_Click" />
+                    <Button x:Name="SettingsNavButton" Content="设置" Style="{StaticResource NavButton}" Click="SettingsNav_Click" />
                 </StackPanel>
 
                 <Border DockPanel.Dock="Bottom" Margin="18,0,18,20" Padding="14" CornerRadius="10" Background="#172033" BorderBrush="#263449" BorderThickness="1">
@@ -164,11 +164,11 @@
             <DockPanel Grid.Row="0" Margin="0,0,0,22">
                 <StackPanel DockPanel.Dock="Left">
                     <TextBlock x:Name="PageTitleText" Text="流量总览" Foreground="{StaticResource Ink}" FontSize="30" FontWeight="Bold" />
-                    <TextBlock x:Name="PageSubtitleText" Text="本机实时监控 + CAUC Dr.COM 后台官方数据" Foreground="{StaticResource Muted}" FontSize="14" Margin="0,6,0,0" />
+                    <TextBlock x:Name="PageSubtitleText" Text="本机实时监控 + 校园网后台数据" Foreground="{StaticResource Muted}" FontSize="14" Margin="0,6,0,0" />
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
-                    <Button Content="网页登录" Style="{StaticResource GhostButton}" Click="OpenLogin_Click" Margin="0,0,10,0" />
-                    <Button Content="同步校园网" Style="{StaticResource PrimaryButton}" Click="SyncCampus_Click" />
+                    <Button Content="网页登录" Style="{StaticResource GhostButton}" Click="OpenLogin_Click" Margin="0,0,10,0" FontSize="14" MinHeight="44" />
+                    <Button Content="同步校园网" Style="{StaticResource PrimaryButton}" Click="SyncCampus_Click" FontSize="14" MinHeight="44" />
                 </StackPanel>
             </DockPanel>
 
@@ -369,14 +369,30 @@
                     <Border Style="{StaticResource Card}">
                         <StackPanel>
                             <TextBlock Text="设置" Foreground="{StaticResource Ink}" FontSize="18" FontWeight="SemiBold" />
-                            <TextBlock Text="当前版本支持：会话过期前免重复登录、30 秒自动同步校园网、1 秒刷新本机网速。" Foreground="{StaticResource Muted}" FontSize="14" TextWrapping="Wrap" Margin="0,12,0,0" />
-                            <TextBlock Text="统计网卡" Foreground="{StaticResource Ink}" FontSize="16" FontWeight="SemiBold" Margin="0,18,0,0" />
+                            <TextBlock Text="当前版本支持：会话过期前免重复登录、自动同步校园网、1 秒刷新本机网速。" Foreground="{StaticResource Muted}" FontSize="14" TextWrapping="Wrap" Margin="0,12,0,0" />
+
+                            <TextBlock Text="监控与窗口" Foreground="{StaticResource Ink}" FontSize="16" FontWeight="SemiBold" Margin="0,22,0,0" />
+                            <TextBlock Text="统计网卡" Foreground="{StaticResource Muted}" FontSize="13" Margin="0,10,0,0" />
                             <ComboBox x:Name="NetworkAdapterComboBox" Width="420" HorizontalAlignment="Left" DisplayMemberPath="Name" SelectedValuePath="Id" SelectionChanged="NetworkAdapterComboBox_SelectionChanged" Margin="0,10,0,0" />
                             <CheckBox x:Name="StartWithWindowsCheckBox" Content="开机自动启动" Foreground="{StaticResource Ink}" FontSize="14" Margin="0,18,0,0" Checked="StartWithWindowsCheckBox_Changed" Unchecked="StartWithWindowsCheckBox_Changed" />
                             <CheckBox x:Name="FloatingMeterCheckBox" Content="显示任务栏上方迷你流量窗" Foreground="{StaticResource Ink}" FontSize="14" Margin="0,10,0,0" Checked="Settings_Changed" Unchecked="Settings_Changed" />
                             <TextBlock Text="关闭窗口时会询问：最小化到托盘，或直接退出。" Foreground="{StaticResource Muted}" FontSize="14" Margin="0,10,0,0" />
-                            <TextBlock Text="提醒阈值" Foreground="{StaticResource Ink}" FontSize="16" FontWeight="SemiBold" Margin="0,22,0,0" />
-                            <Grid Margin="0,10,0,0" MaxWidth="520" HorizontalAlignment="Left">
+                            <TextBlock Text="校园网自动同步间隔" Foreground="{StaticResource Muted}" FontSize="13" Margin="0,16,0,0" />
+                            <ComboBox x:Name="SyncIntervalComboBox" Width="220" HorizontalAlignment="Left" SelectedValuePath="Tag" SelectionChanged="SyncIntervalComboBox_SelectionChanged" Margin="0,10,0,0">
+                                <ComboBoxItem Content="15 秒" Tag="15" />
+                                <ComboBoxItem Content="30 秒（推荐）" Tag="30" />
+                                <ComboBoxItem Content="60 秒" Tag="60" />
+                                <ComboBoxItem Content="120 秒" Tag="120" />
+                            </ComboBox>
+
+                            <Border Height="1" Background="{StaticResource Line}" Margin="0,22,0,0" />
+                            <TextBlock Text="提醒阈值" Foreground="{StaticResource Ink}" FontSize="16" FontWeight="SemiBold" Margin="0,18,0,0" />
+                            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                <CheckBox x:Name="AvailableTrafficAlertCheckBox" Content="剩余流量提醒" Foreground="{StaticResource Ink}" FontSize="14" Margin="0,0,18,0" Checked="Settings_Changed" Unchecked="Settings_Changed" />
+                                <CheckBox x:Name="BalanceAlertCheckBox" Content="余额提醒" Foreground="{StaticResource Ink}" FontSize="14" Margin="0,0,18,0" Checked="Settings_Changed" Unchecked="Settings_Changed" />
+                                <CheckBox x:Name="SessionTrafficAlertCheckBox" Content="本次流量提醒" Foreground="{StaticResource Ink}" FontSize="14" Checked="Settings_Changed" Unchecked="Settings_Changed" />
+                            </StackPanel>
+                            <Grid Margin="0,12,0,0" MaxWidth="520" HorizontalAlignment="Left">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="180" />
                                     <ColumnDefinition Width="120" />
@@ -397,8 +413,19 @@
                                 <TextBox x:Name="SessionThresholdGbTextBox" Grid.Row="2" Grid.Column="1" Text="5" Padding="8,4" LostFocus="Settings_Changed" />
                                 <TextBlock Grid.Row="2" Grid.Column="2" Text="GB 时提醒" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="10,0,0,0" />
                             </Grid>
-                            <Button Content="清除校园网登录状态" Style="{StaticResource GhostButton}" Click="ClearSession_Click" HorizontalAlignment="Left" Margin="0,18,0,0" />
-                            <Button Content="导出诊断日志" Style="{StaticResource GhostButton}" Click="ExportLog_Click" HorizontalAlignment="Left" Margin="0,10,0,0" />
+                            <Border Height="1" Background="{StaticResource Line}" Margin="0,22,0,0" />
+                            <TextBlock Text="账号与诊断" Foreground="{StaticResource Ink}" FontSize="16" FontWeight="SemiBold" Margin="0,18,0,0" />
+                            <Button Content="清除校园网登录状态" Style="{StaticResource GhostButton}" Click="ClearSession_Click" HorizontalAlignment="Left" Margin="0,12,0,0" />
+                            <Button Content="清空本机流量统计" Style="{StaticResource GhostButton}" Click="ClearTrafficData_Click" HorizontalAlignment="Left" Margin="0,10,0,0" />
+                            <Button Content="导出诊断包" Style="{StaticResource GhostButton}" Click="ExportLog_Click" HorizontalAlignment="Left" Margin="0,10,0,0" />
+                            <Button Content="重新打开首次使用引导" Style="{StaticResource GhostButton}" Click="FirstRunGuide_Click" HorizontalAlignment="Left" Margin="0,10,0,0" />
+                            <Border Height="1" Background="{StaticResource Line}" Margin="0,22,0,0" />
+                            <TextBlock Text="版本更新" Foreground="{StaticResource Ink}" FontSize="16" FontWeight="SemiBold" Margin="0,18,0,0" />
+                            <TextBlock Text="更新源地址" Foreground="{StaticResource Muted}" FontSize="13" Margin="0,10,0,0" />
+                            <TextBox x:Name="UpdateSourceTextBox" Width="620" HorizontalAlignment="Left" Padding="8,6" LostFocus="UpdateSourceTextBox_LostFocus" Margin="0,8,0,0" />
+                            <Button Content="检查更新" Style="{StaticResource GhostButton}" Click="CheckUpdate_Click" HorizontalAlignment="Left" Margin="0,10,0,0" />
+                            <Button Content="关于 CAUCNet Traffic" Style="{StaticResource GhostButton}" Click="About_Click" HorizontalAlignment="Left" Margin="0,10,0,0" />
+                            <TextBlock Text="隐私提示：APP 不保存明文密码；诊断包导出时会自动脱敏账号、Cookie、IP 和 MAC。" Foreground="{StaticResource Muted}" FontSize="13" TextWrapping="Wrap" Margin="0,12,0,0" />
                         </StackPanel>
                     </Border>
                 </ScrollViewer>

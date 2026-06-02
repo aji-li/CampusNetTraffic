@@ -51,10 +51,20 @@ public sealed class AppSettingsStore
 
 public sealed class AppSettings
 {
+    public const string DefaultUpdateSourceUrl = "https://raw.githubusercontent.com/aji-li/CampusNetTraffic/main/latest.json";
+
     public string SelectedAdapterId { get; set; } = "all";
     public bool MinimizeToTray { get; set; } = true;
     public bool ShowFloatingMeter { get; set; }
+    public double? FloatingMeterLeft { get; set; }
+    public double? FloatingMeterTop { get; set; }
+    public int CampusSyncIntervalSeconds { get; set; } = 30;
+    public bool EnableAvailableTrafficAlert { get; set; } = true;
+    public bool EnableBalanceAlert { get; set; } = true;
+    public bool EnableSessionTrafficAlert { get; set; } = true;
     public double AvailableThresholdGb { get; set; } = 2;
     public double BalanceThresholdYuan { get; set; } = 5;
     public double SessionThresholdGb { get; set; } = 5;
+    public bool HasCompletedFirstRunGuide { get; set; }
+    public string UpdateSourceUrl { get; set; } = DefaultUpdateSourceUrl;
 }

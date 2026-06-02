@@ -177,6 +177,20 @@ public sealed class TrafficRepository
         await command.ExecuteNonQueryAsync();
     }
 
+    public async Task ClearAllAsync()
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync();
+
+        var command = connection.CreateCommand();
+        command.CommandText = """
+            DELETE FROM traffic_samples;
+            DELETE FROM traffic_usage_minutes;
+            VACUUM;
+            """;
+        await command.ExecuteNonQueryAsync();
+    }
+
     private static async Task<(DateTimeOffset CapturedAt, long Received, long Sent)?> GetPreviousSampleAsync(SqliteConnection connection, TrafficSample sample)
     {
         var command = connection.CreateCommand();

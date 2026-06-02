@@ -1,5 +1,8 @@
 using System.Globalization;
+using System.Diagnostics;
+using System.Net.Http;
 using System.IO;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Windows;
@@ -24,6 +27,7 @@ public partial class MainWindow : Window
     private readonly StartupService _startupService = new();
     private readonly AppSettingsStore _settingsStore = new();
     private readonly AppLogger _logger = new();
+    private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(10) };
     private readonly DispatcherTimer _timer;
     private readonly DispatcherTimer _campusTimer;
     private readonly Forms.NotifyIcon _notifyIcon;
@@ -41,7 +45,9 @@ public partial class MainWindow : Window
     private bool _availableTrafficNotified;
     private bool _balanceNotified;
     private bool _sessionTrafficNotified;
+    private bool _loginExpiredNotified;
     private bool _isLoadingSettings = true;
+    private int _campusSyncFailureCount;
     private AppSettings _settings = new();
     private IReadOnlyList<TrafficUsagePoint> _recentTrend = Array.Empty<TrafficUsagePoint>();
     private IReadOnlyList<TrafficUsagePoint> _dailyTrend = Array.Empty<TrafficUsagePoint>();
@@ -69,10 +75,12 @@ public partial class MainWindow : Window
     }
 
     private sealed record ChartPoint(string Label, double ValueMb);
+    private sealed record UpdateInfo(string Version, string? InstallerUrl, string? PortableUrl, string[] Notes);
 
     public MainWindow()
     {
         InitializeComponent();
+        SetActiveNav(OverviewNavButton);
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _timer.Tick += Timer_Tick;
@@ -94,6 +102,7 @@ public partial class MainWindow : Window
         StartWithWindowsCheckBox.IsChecked = _startupService.IsEnabled();
         LoadNetworkAdapters();
         ApplySettingsToControls();
+        ApplyConfiguredSyncInterval();
         _isLoadingSettings = false;
         ApplyFloatingMeterSetting();
 
@@ -103,6 +112,11 @@ public partial class MainWindow : Window
         _timer.Start();
         _campusTimer.Start();
         await SyncCampusAsync(false);
+
+        if (!_settings.HasCompletedFirstRunGuide)
+        {
+            _ = Dispatcher.BeginInvoke(() => ShowFirstRunGuide(true), DispatcherPriority.ApplicationIdle);
+        }
     }
 
     private async void Timer_Tick(object? sender, EventArgs e)
@@ -139,7 +153,13 @@ public partial class MainWindow : Window
 
     private async void OpenLogin_Click(object sender, RoutedEventArgs e)
     {
+        await StartCampusLoginAsync();
+    }
+
+    private async Task StartCampusLoginAsync()
+    {
         ShowPage(LoginPanel, "校园网登录", "登录一次后，会话过期前会自动复用");
+        SetActiveNav(LoginNavButton);
         await InitializeLoginWebViewAsync();
         LoginWebView.Source = new Uri("https://www.cauc.edu.cn/Self/dashboard");
         SetStatus(AppConnectionState.LoginRequired, "请在网页登录框中登录，完成后 APP 会自动同步。");
@@ -147,7 +167,7 @@ public partial class MainWindow : Window
 
     private void HideBrowser_Click(object sender, RoutedEventArgs e)
     {
-        ShowPage(OverviewPanel, "流量总览", "本机实时监控 + CAUC Dr.COM 后台官方数据");
+        ShowPage(OverviewPanel, "流量总览", "本机实时监控 + 校园网后台数据");
     }
 
     private async void SyncCampus_Click(object sender, RoutedEventArgs e)
@@ -266,11 +286,13 @@ public partial class MainWindow : Window
             ApplyAccount(account);
             DeviceGrid.ItemsSource = devices;
             SetStatus(AppConnectionState.Connected, $"校园网正常，在线设备 {devices.Count} 台，{account.CapturedAt:HH:mm:ss} 已同步。");
+            ResetCampusSyncBackoff();
         }
         catch (TaskCanceledException)
         {
             SetStatus(AppConnectionState.CampusUnavailable, "同步超时：校园网后台超过 8 秒未响应。");
             await _logger.ErrorAsync("Campus sync timeout.");
+            IncreaseCampusSyncBackoff();
         }
         catch (Exception ex)
         {
@@ -280,14 +302,17 @@ public partial class MainWindow : Window
                 _sessionStore.Clear();
                 LoginWebView.CoreWebView2?.CookieManager.DeleteAllCookies();
                 PromptLoginIfNeeded(showLoginHint);
+                IncreaseCampusSyncBackoff();
             }
             else if (showLoginHint)
             {
                 SetStatus(AppConnectionState.Error, $"同步失败：{ex.Message}");
+                IncreaseCampusSyncBackoff();
             }
             else
             {
                 SetStatus(AppConnectionState.CampusUnavailable, $"自动同步暂时失败：{ex.Message}");
+                IncreaseCampusSyncBackoff();
             }
         }
         finally
@@ -537,6 +562,11 @@ public partial class MainWindow : Window
         }
 
         SetStatus(AppConnectionState.LoginRequired, "校园网会话不可用：请登录到首页，APP 会自动保存会话。");
+        if (!_loginExpiredNotified)
+        {
+            _loginExpiredNotified = true;
+            ShowTrayNotice("需要重新登录", "校园网登录状态已过期，请打开 APP 完成网页登录。");
+        }
     }
 
     private void ApplyAccount(AccountSnapshot account)
@@ -549,19 +579,25 @@ public partial class MainWindow : Window
         BillingModeText.Text = account.BillingMode;
         BillingPeriodText.Text = account.BillingPeriod;
         CheckAccountThresholds(account);
+        _loginExpiredNotified = false;
     }
 
     private void CheckAccountThresholds(AccountSnapshot account)
     {
+        if (!_settings.EnableAvailableTrafficAlert && !_settings.EnableBalanceAlert)
+        {
+            return;
+        }
+
         var availableThresholdMb = ReadThreshold(AvailableThresholdGbTextBox.Text, 2) * 1024;
-        if (!_availableTrafficNotified && account.AvailableTrafficMb > 0 && account.AvailableTrafficMb <= availableThresholdMb)
+        if (_settings.EnableAvailableTrafficAlert && !_availableTrafficNotified && account.AvailableTrafficMb > 0 && account.AvailableTrafficMb <= availableThresholdMb)
         {
             _availableTrafficNotified = true;
             ShowTrayNotice("剩余流量提醒", $"校园网剩余流量约 {account.AvailableTrafficMb:N0} MB。");
         }
 
         var balanceThreshold = (decimal)ReadThreshold(BalanceThresholdTextBox.Text, 5);
-        if (!_balanceNotified && account.Balance <= balanceThreshold)
+        if (_settings.EnableBalanceAlert && !_balanceNotified && account.Balance <= balanceThreshold)
         {
             _balanceNotified = true;
             ShowTrayNotice("余额提醒", $"校园网余额 {account.Balance:N2} 元。");
@@ -570,6 +606,11 @@ public partial class MainWindow : Window
 
     private void CheckSessionTrafficThreshold(long localBytes)
     {
+        if (!_settings.EnableSessionTrafficAlert)
+        {
+            return;
+        }
+
         var thresholdBytes = ReadThreshold(SessionThresholdGbTextBox.Text, 5) * 1024d * 1024 * 1024;
         if (!_sessionTrafficNotified && localBytes >= thresholdBytes)
         {
@@ -599,6 +640,24 @@ public partial class MainWindow : Window
 
         StatusText.Text = $"{_campusStatus}\n{detail}";
         UpdateTrayLiveInfo();
+    }
+
+    private void ResetCampusSyncBackoff()
+    {
+        _campusSyncFailureCount = 0;
+        ApplyConfiguredSyncInterval();
+    }
+
+    private void IncreaseCampusSyncBackoff()
+    {
+        _campusSyncFailureCount = Math.Min(_campusSyncFailureCount + 1, 3);
+        var seconds = _campusSyncFailureCount switch
+        {
+            1 => 60,
+            2 => 120,
+            _ => 180
+        };
+        _campusTimer.Interval = TimeSpan.FromSeconds(seconds);
     }
 
     private async Task RefreshUsageStatsAsync()
@@ -716,12 +775,14 @@ public partial class MainWindow : Window
 
     private void OverviewNav_Click(object sender, RoutedEventArgs e)
     {
-        ShowPage(OverviewPanel, "流量总览", "本机实时监控 + CAUC Dr.COM 后台官方数据");
+        ShowPage(OverviewPanel, "流量总览", "本机实时监控 + 校园网后台数据");
+        SetActiveNav(OverviewNavButton);
     }
 
     private async void LoginNav_Click(object sender, RoutedEventArgs e)
     {
         ShowPage(LoginPanel, "校园网登录", "登录一次后，会话过期前会自动复用");
+        SetActiveNav(LoginNavButton);
         await InitializeLoginWebViewAsync();
         LoginWebView.Source ??= new Uri("https://www.cauc.edu.cn/Self/dashboard");
     }
@@ -729,22 +790,34 @@ public partial class MainWindow : Window
     private void DevicesNav_Click(object sender, RoutedEventArgs e)
     {
         ShowPage(DevicesPanel, "在线设备", "查看当前账号在线终端");
+        SetActiveNav(DevicesNavButton);
     }
 
     private async void StatsNav_Click(object sender, RoutedEventArgs e)
     {
         await RefreshUsageStatsAsync();
         ShowPage(StatsPanel, "历史统计", "基于本机采样数据库聚合");
+        SetActiveNav(StatsNavButton);
     }
 
     private void SettingsNav_Click(object sender, RoutedEventArgs e)
     {
         ShowPage(SettingsPanel, "设置", "管理登录状态和本地配置");
+        SetActiveNav(SettingsNavButton);
     }
 
     private void StartWithWindowsCheckBox_Changed(object sender, RoutedEventArgs e)
     {
-        if (_isLoadingSettings || AvailableThresholdGbTextBox is null || BalanceThresholdTextBox is null || SessionThresholdGbTextBox is null || FloatingMeterCheckBox is null)
+        if (_isLoadingSettings
+            || AvailableThresholdGbTextBox is null
+            || BalanceThresholdTextBox is null
+            || SessionThresholdGbTextBox is null
+            || FloatingMeterCheckBox is null
+            || SyncIntervalComboBox is null
+            || AvailableTrafficAlertCheckBox is null
+            || BalanceAlertCheckBox is null
+            || SessionTrafficAlertCheckBox is null
+            || UpdateSourceTextBox is null)
         {
             return;
         }
@@ -800,12 +873,29 @@ public partial class MainWindow : Window
         SaveSettingsFromControls();
     }
 
+    private void SyncIntervalComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        SaveSettingsFromControls();
+    }
+
+    private void UpdateSourceTextBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        SaveSettingsFromControls();
+    }
+
     private void ApplySettingsToControls()
     {
         FloatingMeterCheckBox.IsChecked = _settings.ShowFloatingMeter;
+        SyncIntervalComboBox.SelectedValue = _settings.CampusSyncIntervalSeconds.ToString(CultureInfo.InvariantCulture);
+        AvailableTrafficAlertCheckBox.IsChecked = _settings.EnableAvailableTrafficAlert;
+        BalanceAlertCheckBox.IsChecked = _settings.EnableBalanceAlert;
+        SessionTrafficAlertCheckBox.IsChecked = _settings.EnableSessionTrafficAlert;
         AvailableThresholdGbTextBox.Text = _settings.AvailableThresholdGb.ToString("0.###", CultureInfo.InvariantCulture);
         BalanceThresholdTextBox.Text = _settings.BalanceThresholdYuan.ToString("0.###", CultureInfo.InvariantCulture);
         SessionThresholdGbTextBox.Text = _settings.SessionThresholdGb.ToString("0.###", CultureInfo.InvariantCulture);
+        UpdateSourceTextBox.Text = string.IsNullOrWhiteSpace(_settings.UpdateSourceUrl)
+            ? AppSettings.DefaultUpdateSourceUrl
+            : _settings.UpdateSourceUrl;
     }
 
     private void SaveSettingsFromControls()
@@ -819,6 +909,13 @@ public partial class MainWindow : Window
         _settings.BalanceThresholdYuan = ReadThreshold(BalanceThresholdTextBox.Text, 5);
         _settings.SessionThresholdGb = ReadThreshold(SessionThresholdGbTextBox.Text, 5);
         _settings.ShowFloatingMeter = FloatingMeterCheckBox.IsChecked == true;
+        _settings.CampusSyncIntervalSeconds = ReadSyncIntervalSeconds();
+        _settings.EnableAvailableTrafficAlert = AvailableTrafficAlertCheckBox.IsChecked == true;
+        _settings.EnableBalanceAlert = BalanceAlertCheckBox.IsChecked == true;
+        _settings.EnableSessionTrafficAlert = SessionTrafficAlertCheckBox.IsChecked == true;
+        _settings.UpdateSourceUrl = string.IsNullOrWhiteSpace(UpdateSourceTextBox.Text)
+            ? AppSettings.DefaultUpdateSourceUrl
+            : UpdateSourceTextBox.Text.Trim();
 
         if (NetworkAdapterComboBox.SelectedItem is NetworkAdapterOption option)
         {
@@ -827,6 +924,30 @@ public partial class MainWindow : Window
 
         _settingsStore.Save(_settings);
         ApplyFloatingMeterSetting();
+        if (_campusSyncFailureCount == 0)
+        {
+            ApplyConfiguredSyncInterval();
+        }
+    }
+
+    private int ReadSyncIntervalSeconds()
+    {
+        if (SyncIntervalComboBox.SelectedValue is string text
+            && int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var seconds)
+            && seconds is 15 or 30 or 60 or 120)
+        {
+            return seconds;
+        }
+
+        return 30;
+    }
+
+    private void ApplyConfiguredSyncInterval()
+    {
+        var seconds = _settings.CampusSyncIntervalSeconds is 15 or 30 or 60 or 120
+            ? _settings.CampusSyncIntervalSeconds
+            : 30;
+        _campusTimer.Interval = TimeSpan.FromSeconds(seconds);
     }
 
     private void ClearSession_Click(object sender, RoutedEventArgs e)
@@ -835,20 +956,416 @@ public partial class MainWindow : Window
         LoginWebView.CoreWebView2?.CookieManager.DeleteAllCookies();
         SetStatus(AppConnectionState.LoginRequired, "已清除校园网登录状态，下次同步需要重新登录。");
         ShowPage(LoginPanel, "校园网登录", "登录状态已清除");
+        SetActiveNav(LoginNavButton);
         LoginWebView.Source = new Uri("https://www.cauc.edu.cn/Self/dashboard");
+    }
+
+    private async void ClearTrafficData_Click(object sender, RoutedEventArgs e)
+    {
+        var result = System.Windows.MessageBox.Show(
+            "确定要清空本机流量统计数据吗？\n\n这会删除今日/本月统计和历史趋势数据，但不会影响校园网账号登录状态。",
+            "清空本机流量统计",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+
+        if (result != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        await _trafficRepository.ClearAllAsync();
+        _firstSample = null;
+        _lastSavedSample = null;
+        _recentTrend = Array.Empty<TrafficUsagePoint>();
+        _dailyTrend = Array.Empty<TrafficUsagePoint>();
+        TodayUsageText.Text = "0 MB";
+        MonthUsageText.Text = "0 MB";
+        RenderTrendCharts();
+        SetStatus(AppConnectionState.Monitoring, "本机流量统计数据已清空，正在重新开始采样。");
     }
 
     private void ExportLog_Click(object sender, RoutedEventArgs e)
     {
         try
         {
-            var path = _logger.ExportToDesktop();
-            StatusText.Text = $"诊断日志已导出：{path}";
+            var path = _logger.ExportDiagnosticsToDesktop();
+            StatusText.Text = $"诊断包已导出：{path}";
         }
         catch (Exception ex)
         {
-            StatusText.Text = $"导出日志失败：{ex.Message}";
+            StatusText.Text = $"导出诊断包失败：{ex.Message}";
         }
+    }
+
+    private void FirstRunGuide_Click(object sender, RoutedEventArgs e)
+    {
+        ShowFirstRunGuide(false);
+    }
+
+    private async void CheckUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        SaveSettingsFromControls();
+        var currentVersion = GetCurrentVersion();
+        var updateSource = string.IsNullOrWhiteSpace(_settings.UpdateSourceUrl)
+            ? AppSettings.DefaultUpdateSourceUrl
+            : _settings.UpdateSourceUrl.Trim();
+
+        if (!Uri.TryCreate(updateSource, UriKind.Absolute, out var updateUri)
+            || updateUri.Scheme is not ("http" or "https"))
+        {
+            System.Windows.MessageBox.Show(
+                "更新源地址无效，请填写 http 或 https 开头的 latest.json 地址。",
+                "检查更新",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        try
+        {
+            StatusText.Text = "正在检查更新...";
+            using var response = await _httpClient.GetAsync(updateUri);
+            response.EnsureSuccessStatusCode();
+            var json = await response.Content.ReadAsStringAsync();
+            var update = ParseUpdateInfo(json);
+
+            if (!Version.TryParse(update.Version, out var latestVersion))
+            {
+                throw new InvalidOperationException("更新源中的 version 字段格式不正确。");
+            }
+
+            if (latestVersion <= currentVersion)
+            {
+                System.Windows.MessageBox.Show(
+                    $"当前已是最新版本。\n\n当前版本：{currentVersion}\n更新源版本：{latestVersion}",
+                    "检查更新",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                StatusText.Text = $"已是最新版本：{currentVersion}";
+                return;
+            }
+
+            var downloadUrl = !string.IsNullOrWhiteSpace(update.InstallerUrl)
+                ? update.InstallerUrl
+                : update.PortableUrl;
+            var notes = update.Notes.Length == 0
+                ? "暂无更新日志。"
+                : string.Join(Environment.NewLine, update.Notes.Select(note => $"· {note}"));
+            var message = $"发现新版本：{latestVersion}\n当前版本：{currentVersion}\n\n更新内容：\n{notes}\n\n是否打开下载链接？";
+            var result = System.Windows.MessageBox.Show(
+                message,
+                "发现新版本",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Information);
+
+            if (result == MessageBoxResult.Yes && !string.IsNullOrWhiteSpace(downloadUrl))
+            {
+                OpenExternalUrl(downloadUrl);
+            }
+
+            StatusText.Text = $"发现新版本：{latestVersion}";
+        }
+        catch (HttpRequestException ex)
+        {
+            StatusText.Text = $"检查更新失败：{ex.Message}";
+            System.Windows.MessageBox.Show(
+                $"无法连接更新源。\n\n请检查网络或更新源地址是否可访问。\n\n{ex.Message}",
+                "检查更新失败",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+        catch (TaskCanceledException)
+        {
+            StatusText.Text = "检查更新超时。";
+            System.Windows.MessageBox.Show(
+                "检查更新超时，请稍后再试。",
+                "检查更新失败",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"检查更新失败：{ex.Message}";
+            System.Windows.MessageBox.Show(
+                $"更新源格式不正确或不可用。\n\n{ex.Message}",
+                "检查更新失败",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+    }
+
+    private static Version GetCurrentVersion()
+    {
+        return Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 0, 0);
+    }
+
+    private static UpdateInfo ParseUpdateInfo(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        var version = ReadRequiredUpdateString(root, "version");
+        var installerUrl = ReadOptionalUpdateString(root, "installerUrl");
+        var portableUrl = ReadOptionalUpdateString(root, "portableUrl");
+        var notes = Array.Empty<string>();
+
+        if (root.TryGetProperty("notes", out var notesElement) && notesElement.ValueKind == JsonValueKind.Array)
+        {
+            notes = notesElement
+                .EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString() ?? string.Empty)
+                .Where(note => !string.IsNullOrWhiteSpace(note))
+                .ToArray();
+        }
+
+        return new UpdateInfo(version, installerUrl, portableUrl, notes);
+    }
+
+    private static string ReadRequiredUpdateString(JsonElement root, string propertyName)
+    {
+        var value = ReadOptionalUpdateString(root, propertyName);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new InvalidOperationException($"更新源缺少 {propertyName} 字段。");
+        }
+
+        return value;
+    }
+
+    private static string? ReadOptionalUpdateString(JsonElement root, string propertyName)
+    {
+        return root.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
+            ? property.GetString()
+            : null;
+    }
+
+    private static void OpenExternalUrl(string url)
+    {
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = url,
+            UseShellExecute = true
+        });
+    }
+
+    private void About_Click(object sender, RoutedEventArgs e)
+    {
+        ShowAboutDialog();
+    }
+
+    private void ShowFirstRunGuide(bool markCompletedOnClose)
+    {
+        var dialog = new Window
+        {
+            Title = "首次使用 CAUCNet Traffic",
+            Owner = this,
+            Width = 560,
+            Height = 390,
+            ResizeMode = ResizeMode.NoResize,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = System.Windows.Media.Brushes.White,
+            ShowInTaskbar = false
+        };
+
+        var root = new Grid { Margin = new Thickness(28) };
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var header = new StackPanel();
+        header.Children.Add(new TextBlock
+        {
+            Text = "欢迎使用 CAUCNet Traffic",
+            FontSize = 24,
+            FontWeight = FontWeights.Bold,
+            Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(15, 23, 42))
+        });
+        header.Children.Add(new TextBlock
+        {
+            Text = "第一次使用建议按下面 3 步完成配置。",
+            FontSize = 14,
+            Margin = new Thickness(0, 8, 0, 0),
+            Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(100, 116, 139))
+        });
+        Grid.SetRow(header, 0);
+        root.Children.Add(header);
+
+        var body = new StackPanel { Margin = new Thickness(0, 22, 0, 22) };
+        AddGuideLine(body, "1", "网页登录", "在内嵌网页登录校园网。APP 只复用浏览器会话，不保存明文密码。");
+        AddGuideLine(body, "2", "同步校园网", "登录成功后点击同步，首页会显示官方已用流量、可用流量、余额和在线设备。");
+        AddGuideLine(body, "3", "后台常驻", "关闭窗口时可选择最小化到托盘，继续实时统计本机流量。");
+        body.Children.Add(new TextBlock
+        {
+            Text = "诊断包导出会自动脱敏账号、Cookie、IP 和 MAC。迷你流量窗、开机自启、提醒阈值都可以稍后在设置页调整。",
+            FontSize = 13,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 14, 0, 0),
+            Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(100, 116, 139))
+        });
+        Grid.SetRow(body, 1);
+        root.Children.Add(body);
+
+        var buttons = new Grid();
+        buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(14) });
+        buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var loginButton = new System.Windows.Controls.Button
+        {
+            Content = "开始网页登录",
+            Padding = new Thickness(14, 11, 14, 11),
+            FontWeight = FontWeights.SemiBold
+        };
+        var laterButton = new System.Windows.Controls.Button
+        {
+            Content = "以后再说",
+            Padding = new Thickness(14, 11, 14, 11),
+            FontWeight = FontWeights.SemiBold
+        };
+
+        var shouldLogin = false;
+        loginButton.Click += (_, _) =>
+        {
+            shouldLogin = true;
+            dialog.DialogResult = true;
+        };
+        laterButton.Click += (_, _) => dialog.DialogResult = true;
+
+        Grid.SetColumn(loginButton, 0);
+        Grid.SetColumn(laterButton, 2);
+        buttons.Children.Add(loginButton);
+        buttons.Children.Add(laterButton);
+        Grid.SetRow(buttons, 2);
+        root.Children.Add(buttons);
+
+        dialog.Content = root;
+        dialog.ShowDialog();
+
+        if (markCompletedOnClose)
+        {
+            _settings.HasCompletedFirstRunGuide = true;
+            _settingsStore.Save(_settings);
+        }
+
+        if (shouldLogin)
+        {
+            _ = StartCampusLoginAsync();
+        }
+    }
+
+    private static void AddGuideLine(System.Windows.Controls.Panel parent, string number, string title, string description)
+    {
+        var row = new Grid { Margin = new Thickness(0, 0, 0, 12) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(38) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var badge = new Border
+        {
+            Width = 28,
+            Height = 28,
+            CornerRadius = new CornerRadius(14),
+            Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(37, 99, 235)),
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        badge.Child = new TextBlock
+        {
+            Text = number,
+            Foreground = System.Windows.Media.Brushes.White,
+            FontWeight = FontWeights.Bold,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        row.Children.Add(badge);
+
+        var text = new StackPanel();
+        text.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 15,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(15, 23, 42))
+        });
+        text.Children.Add(new TextBlock
+        {
+            Text = description,
+            FontSize = 13,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 4, 0, 0),
+            Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(100, 116, 139))
+        });
+        Grid.SetColumn(text, 1);
+        row.Children.Add(text);
+        parent.Children.Add(row);
+    }
+
+    private void ShowAboutDialog()
+    {
+        var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
+        var dataPath = System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "CampusNetTraffic");
+
+        var dialog = new Window
+        {
+            Title = "关于 CAUCNet Traffic",
+            Owner = this,
+            Width = 480,
+            Height = 330,
+            ResizeMode = ResizeMode.NoResize,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = System.Windows.Media.Brushes.White,
+            ShowInTaskbar = false
+        };
+
+        var root = new Grid { Margin = new Thickness(26) };
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var header = new StackPanel();
+        header.Children.Add(new TextBlock
+        {
+            Text = "CAUCNet Traffic",
+            FontSize = 24,
+            FontWeight = FontWeights.Bold,
+            Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(15, 23, 42))
+        });
+        header.Children.Add(new TextBlock
+        {
+            Text = $"版本 {version}",
+            FontSize = 14,
+            Margin = new Thickness(0, 6, 0, 0),
+            Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(100, 116, 139))
+        });
+        Grid.SetRow(header, 0);
+        root.Children.Add(header);
+
+        var body = new TextBlock
+        {
+            Text = $"校园网流量助手，用于本机流量监测、校园网后台同步、在线设备查看和托盘常驻。\n\n本地数据目录：\n{dataPath}\n\n隐私说明：不保存明文密码；会话和本地配置保存在当前 Windows 用户目录；诊断包导出时会生成本机日志，发送前请自行确认内容。",
+            FontSize = 14,
+            LineHeight = 22,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 18, 0, 18),
+            Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(51, 65, 85))
+        };
+        Grid.SetRow(body, 1);
+        root.Children.Add(body);
+
+        var closeButton = new System.Windows.Controls.Button
+        {
+            Content = "知道了",
+            Width = 110,
+            Padding = new Thickness(14, 10, 14, 10),
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+            FontWeight = FontWeights.SemiBold
+        };
+        closeButton.Click += (_, _) => dialog.Close();
+        Grid.SetRow(closeButton, 2);
+        root.Children.Add(closeButton);
+
+        dialog.Content = root;
+        dialog.ShowDialog();
     }
 
     private void ShowPage(UIElement activePanel, string title, string subtitle)
@@ -862,6 +1379,29 @@ public partial class MainWindow : Window
         activePanel.Visibility = Visibility.Visible;
         PageTitleText.Text = title;
         PageSubtitleText.Text = subtitle;
+    }
+
+    private void SetActiveNav(System.Windows.Controls.Button activeButton)
+    {
+        var buttons = new[]
+        {
+            OverviewNavButton,
+            LoginNavButton,
+            DevicesNavButton,
+            StatsNavButton,
+            SettingsNavButton
+        };
+
+        foreach (var button in buttons)
+        {
+            button.Background = button == activeButton
+                ? new SolidColorBrush(System.Windows.Media.Color.FromRgb(37, 99, 235))
+                : System.Windows.Media.Brushes.Transparent;
+            button.Foreground = button == activeButton
+                ? System.Windows.Media.Brushes.White
+                : new SolidColorBrush(System.Windows.Media.Color.FromRgb(203, 213, 225));
+            button.FontWeight = button == activeButton ? FontWeights.SemiBold : FontWeights.Normal;
+        }
     }
 
     private (Forms.NotifyIcon Icon, Forms.ToolStripMenuItem StatusItem, Forms.ToolStripMenuItem UsageItem, Forms.ToolStripMenuItem SpeedItem, Forms.ToolStripMenuItem MiniWindowItem) CreateNotifyIcon()
@@ -951,6 +1491,15 @@ public partial class MainWindow : Window
         }
 
         _miniTrafficWindow = new MiniTrafficWindow();
+        if (_settings.FloatingMeterLeft is double left && _settings.FloatingMeterTop is double top && IsUsableWindowPosition(left, top))
+        {
+            _miniTrafficWindow.SetSavedPosition(left, top);
+        }
+        else
+        {
+            _miniTrafficWindow.PlaceNearTaskbar();
+        }
+
         _miniTrafficWindow.UserClosedMiniWindow += (_, _) =>
         {
             _settings.ShowFloatingMeter = false;
@@ -962,7 +1511,24 @@ public partial class MainWindow : Window
             _settingsStore.Save(_settings);
             ApplyFloatingMeterSetting();
         };
-        _miniTrafficWindow.PlaceNearTaskbar();
+        _miniTrafficWindow.UserMovedMiniWindow += (_, _) =>
+        {
+            _settings.FloatingMeterLeft = _miniTrafficWindow.Left;
+            _settings.FloatingMeterTop = _miniTrafficWindow.Top;
+            _settingsStore.Save(_settings);
+        };
+    }
+
+    private static bool IsUsableWindowPosition(double left, double top)
+    {
+        var virtualLeft = SystemParameters.VirtualScreenLeft;
+        var virtualTop = SystemParameters.VirtualScreenTop;
+        var virtualRight = virtualLeft + SystemParameters.VirtualScreenWidth;
+        var virtualBottom = virtualTop + SystemParameters.VirtualScreenHeight;
+        return left >= virtualLeft - 20
+            && top >= virtualTop - 20
+            && left <= virtualRight - 80
+            && top <= virtualBottom - 40;
     }
 
     private void UpdateMiniTrafficWindow()
