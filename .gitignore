@@ -1,8 +1,37 @@
+# Build output
 bin/
 obj/
 dist/
 release/
+TestResults/
+*.nupkg
+
+# Visual Studio / Rider / VS Code local state
 .vs/
+.vscode/
+.idea/
 *.user
 *.suo
-.vscode
+*.userosscache
+*.sln.docstates
+
+# Logs, diagnostics, crash dumps
+*.log
+*.dmp
+*.mdmp
+*.tmp
+*.temp
+*.zip
+
+# Local secrets / licenses
+.env
+.env.*
+syncfusion-license.txt
+syncfusion_license.txt
+*.pfx
+*.snk
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store
