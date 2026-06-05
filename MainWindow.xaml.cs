@@ -21,6 +21,8 @@ namespace CampusNetTraffic;
 
 public partial class MainWindow : Window
 {
+    private static readonly TimeSpan DeviceAutoRefreshInterval = TimeSpan.FromMinutes(5);
+
     private readonly NetworkTrafficMonitor _trafficMonitor = new();
     private readonly TrafficRepository _trafficRepository = new();
     private readonly CampusSessionStore _sessionStore = new();
@@ -56,6 +58,8 @@ public partial class MainWindow : Window
     private string _currentDownloadRate = "0 KB/s";
     private string _currentUploadRate = "0 KB/s";
     private string _campusStatus = "等待同步";
+    private DateTimeOffset? _lastDeviceSyncAt;
+    private int _lastOnlineDeviceCount;
 
     private enum CloseChoice
     {
@@ -172,7 +176,7 @@ public partial class MainWindow : Window
 
     private async void SyncCampus_Click(object sender, RoutedEventArgs e)
     {
-        await SyncCampusAsync(true);
+        await SyncCampusAsync(true, true);
     }
 
     private async void OfflineDevice_Click(object sender, RoutedEventArgs e)
@@ -200,12 +204,12 @@ public partial class MainWindow : Window
             StatusText.Text = success ? $"已注销设备：{device.Ip}" : $"注销失败：{device.Ip}";
             if (success)
             {
-                await SyncCampusAsync(true);
+                await SyncCampusAsync(true, true);
             }
         }
         catch (Exception ex)
         {
-            StatusText.Text = $"注销设备失败：{ex.Message}";
+            SetStatus(AppConnectionState.Error, $"注销设备失败：{GetFriendlyErrorMessage(ex)}");
             await _logger.ErrorAsync("Offline device failed.", ex);
         }
     }
@@ -244,7 +248,7 @@ public partial class MainWindow : Window
         };
     }
 
-    private async Task SyncCampusAsync(bool showLoginHint)
+    private async Task SyncCampusAsync(bool showLoginHint, bool forceDeviceRefresh = false)
     {
         try
         {
@@ -279,13 +283,29 @@ public partial class MainWindow : Window
             }
 
             var account = await GetAccountSnapshotFromWebViewAsync();
-            var devices = await GetOnlineDevicesFromWebViewAsync();
+            IReadOnlyList<OnlineDevice>? devices = null;
+            var shouldRefreshDevices = forceDeviceRefresh || ShouldAutoRefreshDevices();
+            if (shouldRefreshDevices)
+            {
+                try
+                {
+                    devices = await GetOnlineDevicesFromWebViewAsync();
+                    ApplyOnlineDevices(devices, DateTimeOffset.Now);
+                }
+                catch (Exception ex) when (!forceDeviceRefresh)
+                {
+                    await _logger.ErrorAsync("Auto device refresh skipped after failure.", ex);
+                }
+            }
+
             await SaveCurrentSessionAsync();
-            await _logger.InfoAsync($"Campus sync ok. Devices={devices.Count}, Used={account.UsedTrafficMb:N0}M, Available={account.AvailableTrafficMb:N0}M");
+            await _logger.InfoAsync($"Campus sync ok. Devices={_lastOnlineDeviceCount}, DeviceRefresh={devices is not null}, Used={account.UsedTrafficMb:N0}M, Available={account.AvailableTrafficMb:N0}M");
 
             ApplyAccount(account);
-            DeviceGrid.ItemsSource = devices;
-            SetStatus(AppConnectionState.Connected, $"校园网正常，在线设备 {devices.Count} 台，{account.CapturedAt:HH:mm:ss} 已同步。");
+            var deviceText = _lastDeviceSyncAt is null
+                ? "在线设备未刷新"
+                : $"在线设备 {_lastOnlineDeviceCount} 台，设备 {_lastDeviceSyncAt:HH:mm:ss} 刷新";
+            SetStatus(AppConnectionState.Connected, $"校园网正常，账号 {account.CapturedAt:HH:mm:ss} 已同步，{deviceText}。");
             ResetCampusSyncBackoff();
         }
         catch (TaskCanceledException)
@@ -306,12 +326,12 @@ public partial class MainWindow : Window
             }
             else if (showLoginHint)
             {
-                SetStatus(AppConnectionState.Error, $"同步失败：{ex.Message}");
+                SetStatus(AppConnectionState.Error, $"同步失败：{GetFriendlyErrorMessage(ex)}");
                 IncreaseCampusSyncBackoff();
             }
             else
             {
-                SetStatus(AppConnectionState.CampusUnavailable, $"自动同步暂时失败：{ex.Message}");
+                SetStatus(AppConnectionState.CampusUnavailable, $"自动同步暂时失败：{GetFriendlyErrorMessage(ex)}");
                 IncreaseCampusSyncBackoff();
             }
         }
@@ -326,6 +346,50 @@ public partial class MainWindow : Window
         return ex.Message.Contains("not logged in", StringComparison.OrdinalIgnoreCase)
             || ex.Message.Contains("redirected to login", StringComparison.OrdinalIgnoreCase)
             || ex.Message.Contains("login page", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string GetFriendlyErrorMessage(Exception ex)
+    {
+        var message = ex.Message;
+        if (IsLoginExpiredError(ex))
+        {
+            return "校园网登录已过期，请重新登录。";
+        }
+
+        if (message.Contains("timeout", StringComparison.OrdinalIgnoreCase) || ex is TaskCanceledException)
+        {
+            return "校园网后台响应超时，请稍后再试。";
+        }
+
+        if (message.Contains("too many", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("frequent", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("429", StringComparison.OrdinalIgnoreCase))
+        {
+            return "同步可能过于频繁，已自动降低同步频率。";
+        }
+
+        if (message.Contains("redirect", StringComparison.OrdinalIgnoreCase))
+        {
+            return "校园网后台要求重新登录，请打开网页登录页。";
+        }
+
+        if (message.Contains("json", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("script", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("dashboard", StringComparison.OrdinalIgnoreCase))
+        {
+            return "校园网后台数据格式变化或暂时不可用，请稍后再试。";
+        }
+
+        if (message.Contains("network", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("name resolution", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("actively refused", StringComparison.OrdinalIgnoreCase))
+        {
+            return "网络连接异常，无法访问校园网后台。";
+        }
+
+        return string.IsNullOrWhiteSpace(message)
+            ? "校园网后台暂时无法访问。"
+            : message;
     }
 
     private async Task RestoreStoredSessionAsync(CoreWebView2 coreWebView)
@@ -492,6 +556,61 @@ public partial class MainWindow : Window
         return devices;
     }
 
+    private bool ShouldAutoRefreshDevices()
+    {
+        return _lastDeviceSyncAt is null || DateTimeOffset.Now - _lastDeviceSyncAt >= DeviceAutoRefreshInterval;
+    }
+
+    private void ApplyOnlineDevices(IReadOnlyList<OnlineDevice> devices, DateTimeOffset refreshedAt)
+    {
+        _lastOnlineDeviceCount = devices.Count;
+        _lastDeviceSyncAt = refreshedAt;
+        DeviceGrid.ItemsSource = devices;
+        DeviceRefreshStatusText.Text = $"最近刷新：{refreshedAt:HH:mm:ss}，在线设备 {devices.Count} 台";
+    }
+
+    private async Task RefreshOnlineDevicesAsync(bool showStatus)
+    {
+        if (_isCampusSyncing)
+        {
+            if (showStatus)
+            {
+                SetStatus(AppConnectionState.Syncing, "正在同步校园网数据，请稍后再刷新设备。");
+            }
+
+            return;
+        }
+
+        try
+        {
+            if (showStatus)
+            {
+                SetStatus(AppConnectionState.Syncing, "正在刷新在线设备列表...");
+            }
+
+            await InitializeLoginWebViewAsync();
+            await EnsureDashboardPageAsync();
+            var devices = await GetOnlineDevicesFromWebViewAsync();
+            ApplyOnlineDevices(devices, DateTimeOffset.Now);
+            await SaveCurrentSessionAsync();
+            SetStatus(AppConnectionState.Connected, $"在线设备已刷新：{devices.Count} 台。");
+        }
+        catch (Exception ex)
+        {
+            await _logger.ErrorAsync("Refresh online devices failed.", ex);
+            if (IsLoginExpiredError(ex))
+            {
+                _sessionStore.Clear();
+                LoginWebView.CoreWebView2?.CookieManager.DeleteAllCookies();
+                PromptLoginIfNeeded(showStatus);
+            }
+            else if (showStatus)
+            {
+                SetStatus(AppConnectionState.Error, $"刷新在线设备失败：{GetFriendlyErrorMessage(ex)}");
+            }
+        }
+    }
+
     private async Task<bool> OfflineDeviceAsync(string sessionId)
     {
         var escapedSessionId = JsonSerializer.Serialize(sessionId);
@@ -639,7 +758,27 @@ public partial class MainWindow : Window
         };
 
         StatusText.Text = $"{_campusStatus}\n{detail}";
+        UpdateTopStatusBar(state, detail);
         UpdateTrayLiveInfo();
+    }
+
+    private void UpdateTopStatusBar(AppConnectionState state, string detail)
+    {
+        var (background, border, dot, title) = state switch
+        {
+            AppConnectionState.Connected => ("#ECFDF5", "#BBF7D0", "#22C55E", "已登录"),
+            AppConnectionState.LoginRequired => ("#FFFBEB", "#FDE68A", "#F59E0B", "需重新登录"),
+            AppConnectionState.CampusUnavailable => ("#FEF2F2", "#FECACA", "#EF4444", "后台不可达"),
+            AppConnectionState.Error => ("#FEF2F2", "#FECACA", "#EF4444", "同步异常"),
+            AppConnectionState.Syncing => ("#EEF4FF", "#C8D8FF", "#2563EB", "正在同步"),
+            _ => ("#F8FAFC", "#E2E8F0", "#64748B", "本机监控中")
+        };
+
+        TopStatusBar.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(background));
+        TopStatusBar.BorderBrush = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(border));
+        TopStatusDot.Fill = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(dot));
+        TopStatusTitleText.Text = title;
+        TopStatusDetailText.Text = detail;
     }
 
     private void ResetCampusSyncBackoff()
@@ -787,10 +926,19 @@ public partial class MainWindow : Window
         LoginWebView.Source ??= new Uri("https://www.cauc.edu.cn/Self/dashboard");
     }
 
-    private void DevicesNav_Click(object sender, RoutedEventArgs e)
+    private async void DevicesNav_Click(object sender, RoutedEventArgs e)
     {
         ShowPage(DevicesPanel, "在线设备", "查看当前账号在线终端");
         SetActiveNav(DevicesNavButton);
+        if (_lastDeviceSyncAt is null || DateTimeOffset.Now - _lastDeviceSyncAt > TimeSpan.FromMinutes(1))
+        {
+            await RefreshOnlineDevicesAsync(true);
+        }
+    }
+
+    private async void RefreshDevices_Click(object sender, RoutedEventArgs e)
+    {
+        await RefreshOnlineDevicesAsync(true);
     }
 
     private async void StatsNav_Click(object sender, RoutedEventArgs e)
@@ -813,6 +961,7 @@ public partial class MainWindow : Window
             || BalanceThresholdTextBox is null
             || SessionThresholdGbTextBox is null
             || FloatingMeterCheckBox is null
+            || CloseToTrayWithoutPromptCheckBox is null
             || SyncIntervalComboBox is null
             || AvailableTrafficAlertCheckBox is null
             || BalanceAlertCheckBox is null
@@ -886,6 +1035,7 @@ public partial class MainWindow : Window
     private void ApplySettingsToControls()
     {
         FloatingMeterCheckBox.IsChecked = _settings.ShowFloatingMeter;
+        CloseToTrayWithoutPromptCheckBox.IsChecked = _settings.CloseWithoutPrompt || _settings.CloseToTrayWithoutPrompt;
         SyncIntervalComboBox.SelectedValue = _settings.CampusSyncIntervalSeconds.ToString(CultureInfo.InvariantCulture);
         AvailableTrafficAlertCheckBox.IsChecked = _settings.EnableAvailableTrafficAlert;
         BalanceAlertCheckBox.IsChecked = _settings.EnableBalanceAlert;
@@ -909,6 +1059,9 @@ public partial class MainWindow : Window
         _settings.BalanceThresholdYuan = ReadThreshold(BalanceThresholdTextBox.Text, 5);
         _settings.SessionThresholdGb = ReadThreshold(SessionThresholdGbTextBox.Text, 5);
         _settings.ShowFloatingMeter = FloatingMeterCheckBox.IsChecked == true;
+        _settings.CloseWithoutPrompt = CloseToTrayWithoutPromptCheckBox.IsChecked == true;
+        _settings.CloseToTrayWithoutPrompt = _settings.CloseWithoutPrompt
+            && _settings.CloseDefaultAction == AppSettings.CloseActionMinimizeToTray;
         _settings.CampusSyncIntervalSeconds = ReadSyncIntervalSeconds();
         _settings.EnableAvailableTrafficAlert = AvailableTrafficAlertCheckBox.IsChecked == true;
         _settings.EnableBalanceAlert = BalanceAlertCheckBox.IsChecked == true;
@@ -939,14 +1092,14 @@ public partial class MainWindow : Window
             return seconds;
         }
 
-        return 30;
+        return 120;
     }
 
     private void ApplyConfiguredSyncInterval()
     {
         var seconds = _settings.CampusSyncIntervalSeconds is 15 or 30 or 60 or 120
             ? _settings.CampusSyncIntervalSeconds
-            : 30;
+            : 120;
         _campusTimer.Interval = TimeSpan.FromSeconds(seconds);
     }
 
@@ -993,7 +1146,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            StatusText.Text = $"导出诊断包失败：{ex.Message}";
+            StatusText.Text = $"导出诊断包失败：{GetFriendlyErrorMessage(ex)}";
         }
     }
 
@@ -1067,9 +1220,9 @@ public partial class MainWindow : Window
         }
         catch (HttpRequestException ex)
         {
-            StatusText.Text = $"检查更新失败：{ex.Message}";
+            StatusText.Text = $"检查更新失败：{GetFriendlyErrorMessage(ex)}";
             System.Windows.MessageBox.Show(
-                $"无法连接更新源。\n\n请检查网络或更新源地址是否可访问。\n\n{ex.Message}",
+                $"无法连接更新源。\n\n请检查网络或更新源地址是否可访问。\n\n{GetFriendlyErrorMessage(ex)}",
                 "检查更新失败",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
@@ -1085,9 +1238,9 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            StatusText.Text = $"检查更新失败：{ex.Message}";
+            StatusText.Text = $"检查更新失败：{GetFriendlyErrorMessage(ex)}";
             System.Windows.MessageBox.Show(
-                $"更新源格式不正确或不可用。\n\n{ex.Message}",
+                $"更新源格式不正确或不可用。\n\n{GetFriendlyErrorMessage(ex)}",
                 "检查更新失败",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
@@ -1151,6 +1304,11 @@ public partial class MainWindow : Window
     private void About_Click(object sender, RoutedEventArgs e)
     {
         ShowAboutDialog();
+    }
+
+    private void Privacy_Click(object sender, RoutedEventArgs e)
+    {
+        ShowPrivacyDialog();
     }
 
     private void ShowFirstRunGuide(bool markCompletedOnClose)
@@ -1368,6 +1526,67 @@ public partial class MainWindow : Window
         dialog.ShowDialog();
     }
 
+    private void ShowPrivacyDialog()
+    {
+        var dataPath = System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "CampusNetTraffic");
+
+        var dialog = new Window
+        {
+            Title = "隐私说明",
+            Owner = this,
+            Width = 580,
+            Height = 470,
+            ResizeMode = ResizeMode.NoResize,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = System.Windows.Media.Brushes.White,
+            ShowInTaskbar = false
+        };
+
+        var root = new Grid { Margin = new Thickness(28) };
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var title = new TextBlock
+        {
+            Text = "隐私说明",
+            FontSize = 24,
+            FontWeight = FontWeights.Bold,
+            Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(15, 23, 42))
+        };
+        Grid.SetRow(title, 0);
+        root.Children.Add(title);
+
+        var body = new TextBlock
+        {
+            Text = $"CAUCNet Traffic 只在本机保存运行所需数据，不保存明文密码。\n\n保存哪些本地数据：\n- WebView2 登录会话：用于在会话过期前免重复登录\n- settings.json：网卡、同步间隔、提醒阈值、窗口偏好等设置\n- traffic.db：本机流量采样和今日/月度/趋势统计\n- app.log / crash.log：用于排查同步失败和崩溃问题\n\n本地数据目录：\n{dataPath}\n\n诊断包会脱敏哪些内容：\n- 账号、Cookie、JSESSIONID、token\n- IP 地址、MAC 地址\n- 可能像账号的长数字\n\n如何清除数据：\n- 设置页点击“清除校园网登录状态”：清除本地会话和 WebView Cookie\n- 设置页点击“清空本机流量统计”：删除本机历史统计数据库\n- 如果需要彻底清理，可退出软件后手动删除上面的本地数据目录。",
+            FontSize = 14,
+            LineHeight = 23,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 18, 0, 18),
+            Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(51, 65, 85))
+        };
+        Grid.SetRow(body, 1);
+        root.Children.Add(body);
+
+        var closeButton = new System.Windows.Controls.Button
+        {
+            Content = "知道了",
+            Width = 110,
+            Padding = new Thickness(14, 10, 14, 10),
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+            FontWeight = FontWeights.SemiBold
+        };
+        closeButton.Click += (_, _) => dialog.Close();
+        Grid.SetRow(closeButton, 2);
+        root.Children.Add(closeButton);
+
+        dialog.Content = root;
+        dialog.ShowDialog();
+    }
+
     private void ShowPage(UIElement activePanel, string title, string subtitle)
     {
         OverviewPanel.Visibility = Visibility.Collapsed;
@@ -1430,20 +1649,40 @@ public partial class MainWindow : Window
             await RefreshUsageStatsAsync();
             ShowPage(StatsPanel, "历史统计", "基于本机采样数据库聚合");
         }));
-        menu.Items.Add("同步校园网", null, (_, _) => Dispatcher.Invoke(async () => await SyncCampusAsync(true)));
+        menu.Items.Add("同步校园网", null, (_, _) => Dispatcher.Invoke(async () => await SyncCampusAsync(true, true)));
         menu.Items.Add(miniWindowItem);
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => Dispatcher.Invoke(ExitApplication));
 
         var icon = new Forms.NotifyIcon
         {
-            Icon = Drawing.SystemIcons.Application,
+            Icon = LoadTrayIcon(),
             Text = "CAUCNet Traffic",
             Visible = true,
             ContextMenuStrip = menu
         };
         icon.DoubleClick += (_, _) => Dispatcher.Invoke(ShowFromTray);
         return (icon, statusItem, usageItem, speedItem, miniWindowItem);
+    }
+
+    private static Drawing.Icon LoadTrayIcon()
+    {
+        var candidates = new[]
+        {
+            System.IO.Path.Combine(AppContext.BaseDirectory, "app.ico"),
+            System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico"),
+            System.IO.Path.Combine(Environment.CurrentDirectory, "Assets", "app.ico")
+        };
+
+        foreach (var path in candidates)
+        {
+            if (File.Exists(path))
+            {
+                return new Drawing.Icon(path);
+            }
+        }
+
+        return Drawing.SystemIcons.Application;
     }
 
     private void MainWindow_StateChanged(object? sender, EventArgs e)
@@ -1555,6 +1794,24 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_settings.CloseWithoutPrompt || _settings.CloseToTrayWithoutPrompt)
+        {
+            if (_settings.CloseDefaultAction == AppSettings.CloseActionExit)
+            {
+                _allowExit = true;
+                _miniTrafficWindow?.Close();
+                DisposeNotifyIcon();
+            }
+            else
+            {
+                e.Cancel = true;
+                Hide();
+                ShowTrayNotice("CAUCNet Traffic", "已最小化到托盘，仍在后台监测流量。");
+            }
+
+            return;
+        }
+
         var result = ShowCloseChoiceDialog();
 
         if (result == CloseChoice.MinimizeToTray)
@@ -1583,7 +1840,7 @@ public partial class MainWindow : Window
             Title = "退出 CAUCNet Traffic",
             Owner = this,
             Width = 420,
-            Height = 190,
+            Height = 225,
             ResizeMode = ResizeMode.NoResize,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Background = System.Windows.Media.Brushes.White,
@@ -1606,6 +1863,17 @@ public partial class MainWindow : Window
         Grid.SetRow(title, 0);
         root.Children.Add(title);
 
+        var rememberCheckBox = new System.Windows.Controls.CheckBox
+        {
+            Content = "下次不再提示，默认此选项",
+            Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(51, 65, 85)),
+            FontSize = 13,
+            Margin = new Thickness(0, 18, 0, 0),
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        Grid.SetRow(rememberCheckBox, 1);
+        root.Children.Add(rememberCheckBox);
+
         var buttons = new Grid();
         buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(14) });
@@ -1627,11 +1895,13 @@ public partial class MainWindow : Window
         var choice = CloseChoice.Cancel;
         minimizeButton.Click += (_, _) =>
         {
+            SaveCloseDefaultIfRequested(rememberCheckBox.IsChecked == true, AppSettings.CloseActionMinimizeToTray);
             choice = CloseChoice.MinimizeToTray;
             dialog.DialogResult = true;
         };
         exitButton.Click += (_, _) =>
         {
+            SaveCloseDefaultIfRequested(rememberCheckBox.IsChecked == true, AppSettings.CloseActionExit);
             choice = CloseChoice.Exit;
             dialog.DialogResult = true;
         };
@@ -1646,6 +1916,24 @@ public partial class MainWindow : Window
         dialog.Content = root;
         dialog.ShowDialog();
         return choice;
+    }
+
+    private void SaveCloseDefaultIfRequested(bool remember, string action)
+    {
+        if (!remember)
+        {
+            return;
+        }
+
+        _settings.CloseWithoutPrompt = true;
+        _settings.CloseDefaultAction = action;
+        _settings.CloseToTrayWithoutPrompt = action == AppSettings.CloseActionMinimizeToTray;
+        if (CloseToTrayWithoutPromptCheckBox is not null)
+        {
+            CloseToTrayWithoutPromptCheckBox.IsChecked = true;
+        }
+
+        _settingsStore.Save(_settings);
     }
 
     private void ShowFromTray()

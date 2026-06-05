@@ -32,6 +32,18 @@ public sealed class AppSettingsStore
                 settings.ShowFloatingMeter = false;
             }
 
+            if (!json.Contains(nameof(AppSettings.CampusSyncIntervalSeconds), StringComparison.Ordinal))
+            {
+                settings.CampusSyncIntervalSeconds = 120;
+            }
+
+            if (!json.Contains(nameof(AppSettings.CloseWithoutPrompt), StringComparison.Ordinal)
+                && settings.CloseToTrayWithoutPrompt)
+            {
+                settings.CloseWithoutPrompt = true;
+                settings.CloseDefaultAction = AppSettings.CloseActionMinimizeToTray;
+            }
+
             return settings;
         }
         catch
@@ -55,10 +67,13 @@ public sealed class AppSettings
 
     public string SelectedAdapterId { get; set; } = "all";
     public bool MinimizeToTray { get; set; } = true;
+    public bool CloseToTrayWithoutPrompt { get; set; }
+    public bool CloseWithoutPrompt { get; set; }
+    public string CloseDefaultAction { get; set; } = CloseActionMinimizeToTray;
     public bool ShowFloatingMeter { get; set; }
     public double? FloatingMeterLeft { get; set; }
     public double? FloatingMeterTop { get; set; }
-    public int CampusSyncIntervalSeconds { get; set; } = 30;
+    public int CampusSyncIntervalSeconds { get; set; } = 120;
     public bool EnableAvailableTrafficAlert { get; set; } = true;
     public bool EnableBalanceAlert { get; set; } = true;
     public bool EnableSessionTrafficAlert { get; set; } = true;
@@ -67,4 +82,7 @@ public sealed class AppSettings
     public double SessionThresholdGb { get; set; } = 5;
     public bool HasCompletedFirstRunGuide { get; set; }
     public string UpdateSourceUrl { get; set; } = DefaultUpdateSourceUrl;
+
+    public const string CloseActionMinimizeToTray = "MinimizeToTray";
+    public const string CloseActionExit = "Exit";
 }

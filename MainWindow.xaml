@@ -158,6 +158,7 @@
         <Grid Grid.Column="1" Margin="28">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
@@ -172,7 +173,17 @@
                 </StackPanel>
             </DockPanel>
 
-            <Grid Grid.Row="1">
+            <Border x:Name="TopStatusBar" Grid.Row="1" Margin="0,0,0,18" Padding="14,10" CornerRadius="10" Background="#EEF4FF" BorderBrush="#C8D8FF" BorderThickness="1">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Ellipse x:Name="TopStatusDot" Width="10" Height="10" Fill="#2563EB" Margin="0,0,9,0" />
+                        <TextBlock x:Name="TopStatusTitleText" Text="正在准备校园网状态" Foreground="{StaticResource Ink}" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <TextBlock x:Name="TopStatusDetailText" Text="本机监控已启动，等待校园网同步。" Foreground="{StaticResource Muted}" FontSize="13" TextWrapping="Wrap" Margin="16,0,0,0" VerticalAlignment="Center" />
+                </DockPanel>
+            </Border>
+
+            <Grid Grid.Row="2">
                 <Grid x:Name="OverviewPanel">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -296,7 +307,13 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0" Text="在线设备" Foreground="{StaticResource Ink}" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,14" />
+                        <DockPanel Grid.Row="0" Margin="0,0,0,14">
+                            <StackPanel DockPanel.Dock="Left">
+                                <TextBlock Text="在线设备" Foreground="{StaticResource Ink}" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock x:Name="DeviceRefreshStatusText" Text="自动低频刷新，减少后台请求" Foreground="{StaticResource Muted}" FontSize="13" Margin="0,6,0,0" />
+                            </StackPanel>
+                            <Button Content="刷新设备" Style="{StaticResource GhostButton}" DockPanel.Dock="Right" Click="RefreshDevices_Click" />
+                        </DockPanel>
                         <DataGrid Grid.Row="1" x:Name="DeviceGrid" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" HeadersVisibility="Column" GridLinesVisibility="None" RowHeight="38" Background="White" BorderThickness="0">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="上线时间" Binding="{Binding LoginTime}" Width="170" />
@@ -376,13 +393,14 @@
                             <ComboBox x:Name="NetworkAdapterComboBox" Width="420" HorizontalAlignment="Left" DisplayMemberPath="Name" SelectedValuePath="Id" SelectionChanged="NetworkAdapterComboBox_SelectionChanged" Margin="0,10,0,0" />
                             <CheckBox x:Name="StartWithWindowsCheckBox" Content="开机自动启动" Foreground="{StaticResource Ink}" FontSize="14" Margin="0,18,0,0" Checked="StartWithWindowsCheckBox_Changed" Unchecked="StartWithWindowsCheckBox_Changed" />
                             <CheckBox x:Name="FloatingMeterCheckBox" Content="显示任务栏上方迷你流量窗" Foreground="{StaticResource Ink}" FontSize="14" Margin="0,10,0,0" Checked="Settings_Changed" Unchecked="Settings_Changed" />
+                            <CheckBox x:Name="CloseToTrayWithoutPromptCheckBox" Content="关闭窗口时不再提示，默认使用上次选择" Foreground="{StaticResource Ink}" FontSize="14" Margin="0,10,0,0" Checked="Settings_Changed" Unchecked="Settings_Changed" />
                             <TextBlock Text="关闭窗口时会询问：最小化到托盘，或直接退出。" Foreground="{StaticResource Muted}" FontSize="14" Margin="0,10,0,0" />
                             <TextBlock Text="校园网自动同步间隔" Foreground="{StaticResource Muted}" FontSize="13" Margin="0,16,0,0" />
                             <ComboBox x:Name="SyncIntervalComboBox" Width="220" HorizontalAlignment="Left" SelectedValuePath="Tag" SelectionChanged="SyncIntervalComboBox_SelectionChanged" Margin="0,10,0,0">
                                 <ComboBoxItem Content="15 秒" Tag="15" />
-                                <ComboBoxItem Content="30 秒（推荐）" Tag="30" />
+                                <ComboBoxItem Content="30 秒" Tag="30" />
                                 <ComboBoxItem Content="60 秒" Tag="60" />
-                                <ComboBoxItem Content="120 秒" Tag="120" />
+                                <ComboBoxItem Content="120 秒（推荐）" Tag="120" />
                             </ComboBox>
 
                             <Border Height="1" Background="{StaticResource Line}" Margin="0,22,0,0" />
@@ -424,6 +442,7 @@
                             <TextBlock Text="更新源地址" Foreground="{StaticResource Muted}" FontSize="13" Margin="0,10,0,0" />
                             <TextBox x:Name="UpdateSourceTextBox" Width="620" HorizontalAlignment="Left" Padding="8,6" LostFocus="UpdateSourceTextBox_LostFocus" Margin="0,8,0,0" />
                             <Button Content="检查更新" Style="{StaticResource GhostButton}" Click="CheckUpdate_Click" HorizontalAlignment="Left" Margin="0,10,0,0" />
+                            <Button Content="隐私说明" Style="{StaticResource GhostButton}" Click="Privacy_Click" HorizontalAlignment="Left" Margin="0,10,0,0" />
                             <Button Content="关于 CAUCNet Traffic" Style="{StaticResource GhostButton}" Click="About_Click" HorizontalAlignment="Left" Margin="0,10,0,0" />
                             <TextBlock Text="隐私提示：APP 不保存明文密码；诊断包导出时会自动脱敏账号、Cookie、IP 和 MAC。" Foreground="{StaticResource Muted}" FontSize="13" TextWrapping="Wrap" Margin="0,12,0,0" />
                         </StackPanel>

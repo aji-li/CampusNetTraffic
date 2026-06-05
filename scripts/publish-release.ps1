@@ -33,6 +33,7 @@ New-Item -ItemType Directory -Force -Path $releasePath | Out-Null
 
 Copy-Item -LiteralPath (Join-Path $distPath "CAUCNetTraffic.exe") -Destination $releasePath
 Copy-Item -LiteralPath (Join-Path $repoRoot "README.md") -Destination $releasePath
+Copy-Item -LiteralPath (Join-Path $repoRoot "Assets\app.ico") -Destination $releasePath
 
 if (Test-Path $zipPath) {
     Remove-Item -LiteralPath $zipPath -Force
