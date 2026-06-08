@@ -49,6 +49,7 @@ public partial class MainWindow : Window
     private bool _sessionTrafficNotified;
     private bool _loginExpiredNotified;
     private bool _isLoadingSettings = true;
+    private bool _manualLoginInProgress;
     private int _campusSyncFailureCount;
     private AppSettings _settings = new();
     private IReadOnlyList<TrafficUsagePoint> _recentTrend = Array.Empty<TrafficUsagePoint>();
@@ -165,6 +166,8 @@ public partial class MainWindow : Window
         ShowPage(LoginPanel, "校园网登录", "登录一次后，会话过期前会自动复用");
         SetActiveNav(LoginNavButton);
         await InitializeLoginWebViewAsync();
+        _manualLoginInProgress = true;
+        _loginPromptShown = true;
         LoginWebView.Source = new Uri("https://www.cauc.edu.cn/Self/dashboard");
         SetStatus(AppConnectionState.LoginRequired, "请在网页登录框中登录，完成后 APP 会自动同步。");
     }
@@ -243,15 +246,95 @@ public partial class MainWindow : Window
             var currentUrl = LoginWebView.Source?.ToString() ?? string.Empty;
             if (currentUrl.Contains("/Self/dashboard", StringComparison.OrdinalIgnoreCase))
             {
-                await SyncCampusAsync(false);
+                await Task.Delay(700);
+                if (await IsDashboardLoggedInAsync())
+                {
+                    _manualLoginInProgress = false;
+                    _loginPromptShown = false;
+                    await SyncCampusAsync(false);
+                }
+                else if (_manualLoginInProgress)
+                {
+                    SetStatus(AppConnectionState.LoginRequired, "请继续完成网页登录，成功进入首页后会自动同步。");
+                }
             }
         };
+    }
+
+    private async Task ClearCampusLoginStateAsync()
+    {
+        _sessionStore.Clear();
+        if (LoginWebView.CoreWebView2 is not null)
+        {
+            LoginWebView.CoreWebView2.CookieManager.DeleteAllCookies();
+            try
+            {
+                await LoginWebView.CoreWebView2.Profile.ClearBrowsingDataAsync(
+                    CoreWebView2BrowsingDataKinds.DiskCache
+                    | CoreWebView2BrowsingDataKinds.GeneralAutofill
+                    | CoreWebView2BrowsingDataKinds.PasswordAutosave);
+            }
+            catch
+            {
+                // Clearing cookies is the important part; cache cleanup is best-effort.
+            }
+        }
+    }
+
+    private async Task<bool> IsDashboardLoggedInAsync()
+    {
+        if (LoginWebView.CoreWebView2 is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            var raw = await LoginWebView.CoreWebView2.ExecuteScriptAsync("""
+                (() => {
+                    const html = document.documentElement ? document.documentElement.innerHTML : '';
+                    const text = document.body ? document.body.innerText : '';
+                    const loginForm = !!document.querySelector('form[action*="login/verify"], input[name="account"], input[type="password"]');
+                    const hasTraffic = text.includes('已用流量') || text.includes('可用流量') || html.includes('refreshaccount');
+                    return { loginForm, hasTraffic, href: location.href };
+                })()
+                """);
+            var json = NormalizeScriptJson(raw);
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            var loginForm = TryGetBoolean(root, "loginForm", out var isLoginForm) && isLoginForm;
+            var hasTraffic = TryGetBoolean(root, "hasTraffic", out var hasTrafficData) && hasTrafficData;
+            return hasTraffic && !loginForm;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private async Task SyncCampusAsync(bool showLoginHint, bool forceDeviceRefresh = false)
     {
         try
         {
+            if (_manualLoginInProgress)
+            {
+                await InitializeLoginWebViewAsync();
+                if (await IsDashboardLoggedInAsync())
+                {
+                    _manualLoginInProgress = false;
+                    _loginPromptShown = false;
+                }
+                else
+                {
+                    if (showLoginHint)
+                    {
+                        SetStatus(AppConnectionState.LoginRequired, "请先在网页登录框中完成登录，进入首页后 APP 会自动同步。");
+                    }
+
+                    return;
+                }
+            }
+
             if (_isCampusSyncing)
             {
                 if (showLoginHint)
@@ -319,8 +402,7 @@ public partial class MainWindow : Window
             await _logger.ErrorAsync("Campus sync failed.", ex);
             if (IsLoginExpiredError(ex))
             {
-                _sessionStore.Clear();
-                LoginWebView.CoreWebView2?.CookieManager.DeleteAllCookies();
+                await ClearCampusLoginStateAsync();
                 PromptLoginIfNeeded(showLoginHint);
                 IncreaseCampusSyncBackoff();
             }
@@ -532,6 +614,15 @@ public partial class MainWindow : Window
             throw new InvalidOperationException($"Online list response did not contain text: {Shorten(json)}");
         }
 
+        var trimmedBody = body.TrimStart();
+        if (trimmedBody.StartsWith("<", StringComparison.Ordinal)
+            || body.Contains("login/verify", StringComparison.OrdinalIgnoreCase)
+            || body.Contains("type=\"password\"", StringComparison.OrdinalIgnoreCase)
+            || body.Contains("type='password'", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Campus session is not logged in. Please log in inside the app first.");
+        }
+
         using var document = JsonDocument.Parse(body);
         var devices = new List<OnlineDevice>();
 
@@ -600,8 +691,7 @@ public partial class MainWindow : Window
             await _logger.ErrorAsync("Refresh online devices failed.", ex);
             if (IsLoginExpiredError(ex))
             {
-                _sessionStore.Clear();
-                LoginWebView.CoreWebView2?.CookieManager.DeleteAllCookies();
+                await ClearCampusLoginStateAsync();
                 PromptLoginIfNeeded(showStatus);
             }
             else if (showStatus)
@@ -649,7 +739,8 @@ public partial class MainWindow : Window
         var currentUrl = LoginWebView.Source?.ToString() ?? string.Empty;
         if (currentUrl.Contains("/Self/dashboard", StringComparison.OrdinalIgnoreCase)
             && !currentUrl.Contains("getOnlineList", StringComparison.OrdinalIgnoreCase)
-            && !currentUrl.Contains("getLoginHistory", StringComparison.OrdinalIgnoreCase))
+            && !currentUrl.Contains("getLoginHistory", StringComparison.OrdinalIgnoreCase)
+            && await IsDashboardLoggedInAsync())
         {
             return;
         }
@@ -676,6 +767,7 @@ public partial class MainWindow : Window
         if (forceShow || !_loginPromptShown)
         {
             _loginPromptShown = true;
+            _manualLoginInProgress = true;
             ShowPage(LoginPanel, "校园网登录", "会话过期后需要重新登录");
             LoginWebView.Source = new Uri("https://www.cauc.edu.cn/Self/dashboard");
         }
