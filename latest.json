@@ -4,6 +4,8 @@
   "installerUrl": "https://github.com/aji-li/CampusNetTraffic/releases/download/v1.1/CAUCNetTraffic-v1.1.0-Setup.exe",
   "portableUrl": "https://github.com/aji-li/CampusNetTraffic/releases/download/v1.1/CAUCNetTraffic-v1.1.0.zip",
   "notes": [
+    "新增应用流量页：显示哪些应用正在使用网络流量，以及实时上传/下载和累计用量",
+    "应用流量基于 Windows ETW 事件聚合，不使用抓包驱动，部分系统可能需要管理员权限",
     "优化校园网网页登录状态判断，减少反复输入账号密码的问题",
     "登录过程中暂停后台自动同步，避免打断网页登录",
     "在线设备接口返回登录页时自动识别为登录过期",
