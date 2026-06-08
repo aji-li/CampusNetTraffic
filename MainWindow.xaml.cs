@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private static readonly TimeSpan DeviceAutoRefreshInterval = TimeSpan.FromMinutes(5);
 
     private readonly NetworkTrafficMonitor _trafficMonitor = new();
+    private readonly ApplicationTrafficMonitor _applicationTrafficMonitor = new();
     private readonly TrafficRepository _trafficRepository = new();
     private readonly CampusSessionStore _sessionStore = new();
     private readonly StartupService _startupService = new();
@@ -50,6 +51,7 @@ public partial class MainWindow : Window
     private bool _loginExpiredNotified;
     private bool _isLoadingSettings = true;
     private bool _manualLoginInProgress;
+    private bool _runtimeResourcesDisposed;
     private int _campusSyncFailureCount;
     private AppSettings _settings = new();
     private IReadOnlyList<TrafficUsagePoint> _recentTrend = Array.Empty<TrafficUsagePoint>();
@@ -81,6 +83,14 @@ public partial class MainWindow : Window
 
     private sealed record ChartPoint(string Label, double ValueMb);
     private sealed record UpdateInfo(string Version, string? InstallerUrl, string? PortableUrl, string[] Notes);
+    private sealed record AppTrafficRow(
+        string ProcessName,
+        int ProcessId,
+        string DownloadRate,
+        string UploadRate,
+        string DownloadTotal,
+        string UploadTotal,
+        string Total);
 
     public MainWindow()
     {
@@ -145,6 +155,10 @@ public partial class MainWindow : Window
         LastSampleText.Text = $"最近采样：{sample.CapturedAt:HH:mm:ss}";
         UpdateTrayLiveInfo();
         UpdateMiniTrafficWindow();
+        if (AppsPanel.Visibility == Visibility.Visible)
+        {
+            RefreshApplicationTrafficGrid();
+        }
 
         CheckSessionTrafficThreshold(localBytes);
 
@@ -1004,6 +1018,36 @@ public partial class MainWindow : Window
         return Math.Round(bytes / 1024d / 1024d, 2);
     }
 
+    private void EnsureApplicationTrafficMonitorStarted()
+    {
+        if (!_applicationTrafficMonitor.IsRunning)
+        {
+            _applicationTrafficMonitor.Start();
+        }
+    }
+
+    private void RefreshApplicationTrafficGrid()
+    {
+        EnsureApplicationTrafficMonitorStarted();
+        var snapshots = _applicationTrafficMonitor.CaptureTop(20);
+        AppTrafficGrid.ItemsSource = snapshots
+            .Select(item => new AppTrafficRow(
+                item.ProcessName,
+                item.ProcessId,
+                FormatRate(item.DownloadBytesPerSecond),
+                FormatRate(item.UploadBytesPerSecond),
+                FormatBytes(item.DownloadBytes),
+                FormatBytes(item.UploadBytes),
+                FormatBytes(item.TotalBytes)))
+            .ToList();
+
+        AppTrafficStatusText.Text = !_applicationTrafficMonitor.IsRunning
+            ? _applicationTrafficMonitor.StatusMessage
+            : snapshots.Count == 0
+                ? "正在监听应用流量，暂未捕获到网络活动"
+                : $"正在监听应用流量，已捕获 {snapshots.Count} 个活跃应用";
+    }
+
     private void OverviewNav_Click(object sender, RoutedEventArgs e)
     {
         ShowPage(OverviewPanel, "流量总览", "本机实时监控 + 校园网后台数据");
@@ -1031,6 +1075,21 @@ public partial class MainWindow : Window
     private async void RefreshDevices_Click(object sender, RoutedEventArgs e)
     {
         await RefreshOnlineDevicesAsync(true);
+    }
+
+    private void AppsNav_Click(object sender, RoutedEventArgs e)
+    {
+        EnsureApplicationTrafficMonitorStarted();
+        RefreshApplicationTrafficGrid();
+        ShowPage(AppsPanel, "应用流量", "查看本次运行中各应用的实时网络占用");
+        SetActiveNav(AppsNavButton);
+    }
+
+    private void ResetAppTraffic_Click(object sender, RoutedEventArgs e)
+    {
+        EnsureApplicationTrafficMonitorStarted();
+        _applicationTrafficMonitor.Reset();
+        RefreshApplicationTrafficGrid();
     }
 
     private async void StatsNav_Click(object sender, RoutedEventArgs e)
@@ -1684,6 +1743,7 @@ public partial class MainWindow : Window
         OverviewPanel.Visibility = Visibility.Collapsed;
         LoginPanel.Visibility = Visibility.Collapsed;
         DevicesPanel.Visibility = Visibility.Collapsed;
+        AppsPanel.Visibility = Visibility.Collapsed;
         StatsPanel.Visibility = Visibility.Collapsed;
         SettingsPanel.Visibility = Visibility.Collapsed;
 
@@ -1699,6 +1759,7 @@ public partial class MainWindow : Window
             OverviewNavButton,
             LoginNavButton,
             DevicesNavButton,
+            AppsNavButton,
             StatsNavButton,
             SettingsNavButton
         };
@@ -1882,7 +1943,7 @@ public partial class MainWindow : Window
         if (_allowExit)
         {
             _miniTrafficWindow?.Close();
-            DisposeNotifyIcon();
+            DisposeRuntimeResources();
             return;
         }
 
@@ -1892,7 +1953,7 @@ public partial class MainWindow : Window
             {
                 _allowExit = true;
                 _miniTrafficWindow?.Close();
-                DisposeNotifyIcon();
+                DisposeRuntimeResources();
             }
             else
             {
@@ -1918,7 +1979,7 @@ public partial class MainWindow : Window
         {
             _allowExit = true;
             _miniTrafficWindow?.Close();
-            DisposeNotifyIcon();
+            DisposeRuntimeResources();
             return;
         }
 
@@ -2039,8 +2100,20 @@ public partial class MainWindow : Window
     {
         _allowExit = true;
         _miniTrafficWindow?.Close();
-        DisposeNotifyIcon();
+        DisposeRuntimeResources();
         Close();
+    }
+
+    private void DisposeRuntimeResources()
+    {
+        if (_runtimeResourcesDisposed)
+        {
+            return;
+        }
+
+        _runtimeResourcesDisposed = true;
+        _applicationTrafficMonitor.Dispose();
+        DisposeNotifyIcon();
     }
 
     private void DisposeNotifyIcon()

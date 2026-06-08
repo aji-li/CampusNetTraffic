@@ -142,6 +142,7 @@
                     <Button x:Name="OverviewNavButton" Content="总览" Style="{StaticResource NavButton}" Click="OverviewNav_Click" />
                     <Button x:Name="LoginNavButton" Content="校园网登录" Style="{StaticResource NavButton}" Click="LoginNav_Click" />
                     <Button x:Name="DevicesNavButton" Content="在线设备" Style="{StaticResource NavButton}" Click="DevicesNav_Click" />
+                    <Button x:Name="AppsNavButton" Content="应用流量" Style="{StaticResource NavButton}" Click="AppsNav_Click" />
                     <Button x:Name="StatsNavButton" Content="历史统计" Style="{StaticResource NavButton}" Click="StatsNav_Click" />
                     <Button x:Name="SettingsNavButton" Content="设置" Style="{StaticResource NavButton}" Click="SettingsNav_Click" />
                 </StackPanel>
@@ -332,6 +333,35 @@
                                 </DataGridTemplateColumn>
                             </DataGrid.Columns>
                         </DataGrid>
+                    </Grid>
+                </Border>
+
+                <Border x:Name="AppsPanel" Style="{StaticResource Card}" Visibility="Collapsed">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <DockPanel Grid.Row="0" Margin="0,0,0,14">
+                            <StackPanel DockPanel.Dock="Left">
+                                <TextBlock Text="应用流量" Foreground="{StaticResource Ink}" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock x:Name="AppTrafficStatusText" Text="正在准备应用流量监控" Foreground="{StaticResource Muted}" FontSize="13" Margin="0,6,0,0" />
+                            </StackPanel>
+                            <Button Content="清零本页统计" Style="{StaticResource GhostButton}" DockPanel.Dock="Right" Click="ResetAppTraffic_Click" />
+                        </DockPanel>
+                        <DataGrid Grid.Row="1" x:Name="AppTrafficGrid" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" HeadersVisibility="Column" GridLinesVisibility="None" RowHeight="38" Background="White" BorderThickness="0">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="应用" Binding="{Binding ProcessName}" Width="*" />
+                                <DataGridTextColumn Header="PID" Binding="{Binding ProcessId}" Width="80" />
+                                <DataGridTextColumn Header="下载速度" Binding="{Binding DownloadRate}" Width="120" />
+                                <DataGridTextColumn Header="上传速度" Binding="{Binding UploadRate}" Width="120" />
+                                <DataGridTextColumn Header="本次下载" Binding="{Binding DownloadTotal}" Width="120" />
+                                <DataGridTextColumn Header="本次上传" Binding="{Binding UploadTotal}" Width="120" />
+                                <DataGridTextColumn Header="合计" Binding="{Binding Total}" Width="120" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <TextBlock Grid.Row="2" Text="说明：应用流量基于 Windows ETW 网络事件实时聚合，从 APP 启动监听后开始统计；部分系统可能需要管理员权限。" Foreground="{StaticResource Muted}" FontSize="13" TextWrapping="Wrap" Margin="0,12,0,0" />
                     </Grid>
                 </Border>
 
