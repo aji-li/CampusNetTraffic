@@ -52,6 +52,7 @@ public partial class MainWindow : Window
     private bool _isLoadingSettings = true;
     private bool _manualLoginInProgress;
     private bool _runtimeResourcesDisposed;
+    private DateTimeOffset? _lastLoginFormInteractionAt;
     private int _campusSyncFailureCount;
     private AppSettings _settings = new();
     private IReadOnlyList<TrafficUsagePoint> _recentTrend = Array.Empty<TrafficUsagePoint>();
@@ -254,6 +255,33 @@ public partial class MainWindow : Window
         }
 
         await RestoreStoredSessionAsync(coreWebView);
+        coreWebView.WebMessageReceived += (_, args) =>
+        {
+            if (args.TryGetWebMessageAsString().Equals("campus-login-form-interaction", StringComparison.Ordinal))
+            {
+                _lastLoginFormInteractionAt = DateTimeOffset.Now;
+            }
+        };
+
+        await coreWebView.AddScriptToExecuteOnDocumentCreatedAsync("""
+            (() => {
+                const notify = () => {
+                    try { chrome.webview.postMessage('campus-login-form-interaction'); } catch (_) {}
+                };
+                document.addEventListener('input', event => {
+                    const target = event.target;
+                    if (target && target.matches && target.matches('input[type="password"], input[name="account"], input[name="username"], input[type="text"]')) {
+                        notify();
+                    }
+                }, true);
+                document.addEventListener('submit', event => {
+                    const target = event.target;
+                    if (target && target.querySelector && target.querySelector('input[type="password"]')) {
+                        notify();
+                    }
+                }, true);
+            })();
+            """);
 
         coreWebView.NavigationCompleted += async (_, _) =>
         {
@@ -261,6 +289,12 @@ public partial class MainWindow : Window
             if (currentUrl.Contains("/Self/dashboard", StringComparison.OrdinalIgnoreCase))
             {
                 await Task.Delay(700);
+                if (await IsLoginFormActiveAsync())
+                {
+                    SetStatus(AppConnectionState.LoginRequired, "请继续完成网页登录，APP 会在进入首页后自动同步。");
+                    return;
+                }
+
                 if (await IsDashboardLoggedInAsync())
                 {
                     _manualLoginInProgress = false;
@@ -293,6 +327,44 @@ public partial class MainWindow : Window
                 // Clearing cookies is the important part; cache cleanup is best-effort.
             }
         }
+    }
+
+    private async Task<bool> IsLoginFormActiveAsync()
+    {
+        if (LoginWebView.CoreWebView2 is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            var raw = await LoginWebView.CoreWebView2.ExecuteScriptAsync("""
+                (() => {
+                    const active = document.activeElement;
+                    const hasPassword = !!document.querySelector('input[type="password"]');
+                    const activeIsCredential = !!active && (
+                        active.matches('input[type="password"], input[name="account"], input[name="username"], input[type="text"]')
+                    );
+                    return { hasPassword, activeIsCredential };
+                })()
+                """);
+            var json = NormalizeScriptJson(raw);
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            var hasPassword = TryGetBoolean(root, "hasPassword", out var passwordVisible) && passwordVisible;
+            var activeIsCredential = TryGetBoolean(root, "activeIsCredential", out var editingCredential) && editingCredential;
+            return hasPassword && (activeIsCredential || IsRecentLoginFormInteraction());
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private bool IsRecentLoginFormInteraction()
+    {
+        return _lastLoginFormInteractionAt is not null
+            && DateTimeOffset.Now - _lastLoginFormInteractionAt.Value < TimeSpan.FromSeconds(8);
     }
 
     private async Task<bool> IsDashboardLoggedInAsync()
@@ -330,6 +402,16 @@ public partial class MainWindow : Window
     {
         try
         {
+            if (await IsLoginFormActiveAsync())
+            {
+                if (showLoginHint)
+                {
+                    SetStatus(AppConnectionState.LoginRequired, "请先完成网页登录，APP 会在进入首页后自动同步。");
+                }
+
+                return;
+            }
+
             if (_manualLoginInProgress)
             {
                 await InitializeLoginWebViewAsync();
@@ -750,6 +832,11 @@ public partial class MainWindow : Window
 
     private async Task EnsureDashboardPageAsync()
     {
+        if (await IsLoginFormActiveAsync())
+        {
+            return;
+        }
+
         var currentUrl = LoginWebView.Source?.ToString() ?? string.Empty;
         if (currentUrl.Contains("/Self/dashboard", StringComparison.OrdinalIgnoreCase)
             && !currentUrl.Contains("getOnlineList", StringComparison.OrdinalIgnoreCase)
