@@ -5,6 +5,11 @@ dist/
 release/
 TestResults/
 *.nupkg
+packages/
+work/
+work-vsconfig.json
+Driver/x64/
+Driver/CampusNe.*/
 
 # Visual Studio / Rider / VS Code local state
 .vs/

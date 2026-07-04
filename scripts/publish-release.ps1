@@ -2,6 +2,8 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $projectPath = Join-Path $repoRoot "CampusNetTraffic.csproj"
+$trafficServiceProjectPath = Join-Path $repoRoot "TrafficService\CampusNetTraffic.TrafficService.csproj"
+$driverReleasePath = Join-Path $repoRoot "Driver\x64\Release\CampusNetTrafficNet.sys"
 $propsPath = Join-Path $repoRoot "Directory.Build.props"
 $distPath = Join-Path $repoRoot "dist"
 $releaseRoot = Join-Path $repoRoot "release"
@@ -16,8 +18,19 @@ Write-Host "Publishing CAUCNet Traffic $version..."
 Get-Process -Name "CAUCNetTraffic","CampusNetTraffic" -ErrorAction SilentlyContinue |
     Where-Object { $_.Path -like "$repoRoot*" } |
     Stop-Process -Force
+Get-Process -Name "CampusNetTraffic.TrafficService" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Path -like "$repoRoot*" } |
+    Stop-Process -Force
 
 dotnet publish $projectPath `
+    -c Release `
+    -r win-x64 `
+    --self-contained true `
+    -p:PublishSingleFile=true `
+    -p:IncludeNativeLibrariesForSelfExtract=true `
+    -o $distPath
+
+dotnet publish $trafficServiceProjectPath `
     -c Release `
     -r win-x64 `
     --self-contained true `
@@ -32,6 +45,11 @@ if (Test-Path $releasePath) {
 New-Item -ItemType Directory -Force -Path $releasePath | Out-Null
 
 Copy-Item -LiteralPath (Join-Path $distPath "CAUCNetTraffic.exe") -Destination $releasePath
+Copy-Item -LiteralPath (Join-Path $distPath "CampusNetTraffic.TrafficService.exe") -Destination $releasePath
+if (Test-Path $driverReleasePath) {
+    Copy-Item -LiteralPath $driverReleasePath -Destination $distPath
+    Copy-Item -LiteralPath $driverReleasePath -Destination $releasePath
+}
 Copy-Item -LiteralPath (Join-Path $repoRoot "README.md") -Destination $releasePath
 Copy-Item -LiteralPath (Join-Path $repoRoot "Assets\app.ico") -Destination $releasePath
 

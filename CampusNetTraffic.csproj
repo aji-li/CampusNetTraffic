@@ -13,6 +13,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="TrafficService\**\*.cs" />
+    <Compile Remove="packages\**\*.cs" />
+    <Compile Remove="work\**\*.cs" />
+    <None Remove="packages\**\*" />
+    <None Remove="work\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.8" />
     <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.2.3" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3967.48" />

@@ -1,6 +1,11 @@
+param(
+    [switch]$TestSignDriver
+)
+
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$driverBuildScript = Join-Path $PSScriptRoot "build-driver.ps1"
 $publishScript = Join-Path $PSScriptRoot "publish-release.ps1"
 $issPath = Join-Path $repoRoot "installer\CAUCNetTraffic.iss"
 $propsPath = Join-Path $repoRoot "Directory.Build.props"
@@ -8,11 +13,22 @@ $props = [xml](Get-Content -Raw -Encoding UTF8 $propsPath)
 $version = $props.Project.PropertyGroup.Version
 $installerPath = Join-Path $repoRoot "release\CAUCNetTraffic-v$version-Setup.exe"
 
+if ($TestSignDriver) {
+    & powershell -ExecutionPolicy Bypass -File $driverBuildScript -TestSign
+} else {
+    & powershell -ExecutionPolicy Bypass -File $driverBuildScript
+}
+
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
+
 & powershell -ExecutionPolicy Bypass -File $publishScript
 
 $iscc = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
 if (-not $iscc) {
     $candidates = @(
+        "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
         "E:\Program Files\Inno Setup 6\ISCC.exe",
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
         "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"

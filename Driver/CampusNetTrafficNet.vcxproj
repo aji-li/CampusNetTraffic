@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{6A5C4425-EC68-4A55-B902-0104E7232B7C}</ProjectGuid>
+    <RootNamespace>CampusNetTrafficNet</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+    <WdkNuGetRoot>$(MSBuildThisFileDirectory)..\packages\Microsoft.Windows.WDK.x64.10.0.26100.6584\</WdkNuGetRoot>
+    <SdkNuGetRoot>$(MSBuildThisFileDirectory)..\packages\Microsoft.Windows.SDK.cpp.x64.10.0.26100.6584\</SdkNuGetRoot>
+    <InstalledWdkRoot>C:\Program Files (x86)\Windows Kits\10\</InstalledWdkRoot>
+    <WDKBuildFolder>10.0.26100.0</WDKBuildFolder>
+    <WindowsSDKInstalled>true</WindowsSDKInstalled>
+    <WindowsSDK_Desktop_Support>true</WindowsSDK_Desktop_Support>
+  </PropertyGroup>
+  <Import Project="$(SdkNuGetRoot)build\native\Microsoft.Windows.SDK.cpp.x64.props" Condition="Exists('$(SdkNuGetRoot)build\native\Microsoft.Windows.SDK.cpp.x64.props')" />
+  <Import Project="$(WdkNuGetRoot)build\native\Microsoft.Windows.WDK.x64.props" Condition="Exists('$(WdkNuGetRoot)build\native\Microsoft.Windows.WDK.x64.props')" />
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Driver</ConfigurationType>
+    <PlatformToolset>v143</PlatformToolset>
+    <DriverType>WDM</DriverType>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup>
+    <GenerateManifest>false</GenerateManifest>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <Import Project="$(WdkNuGetRoot)c\build\10.0.26100.0\x64\WindowsKernelModeDriver\WDK.x64.WindowsKernelModeDriver.props" Condition="Exists('$(WdkNuGetRoot)c\build\10.0.26100.0\x64\WindowsKernelModeDriver\WDK.x64.WindowsKernelModeDriver.props')" />
+  <Import Project="$(WdkNuGetRoot)c\build\10.0.26100.0\WindowsDriver.KernelMode.props" Condition="Exists('$(WdkNuGetRoot)c\build\10.0.26100.0\WindowsDriver.KernelMode.props')" />
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+      <AdditionalIncludeDirectories>$(InstalledWdkRoot)Include\10.0.26100.0\km;$(InstalledWdkRoot)Include\10.0.26100.0\km\crt;$(InstalledWdkRoot)Include\10.0.26100.0\shared;$(InstalledWdkRoot)Include\10.0.26100.0\um;$(WdkNuGetRoot)c\Include\10.0.26100.0\km;$(WdkNuGetRoot)c\Include\10.0.26100.0\km\crt;$(WdkNuGetRoot)c\Include\10.0.26100.0\shared;$(WdkNuGetRoot)c\Include\10.0.26100.0\um;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);_AMD64_;AMD64;_WIN64;NDIS60;WIN9X_COMPAT_SPINLOCK</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <ExceptionHandling>false</ExceptionHandling>
+      <StringPooling>true</StringPooling>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(InstalledWdkRoot)Lib\10.0.26100.0\km\x64;$(WdkNuGetRoot)c\Lib\10.0.26100.0\km\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>fwpkclnt.lib;ndis.lib;ntoskrnl.lib;hal.lib;bufferoverflowfastfailk.lib</AdditionalDependencies>
+      <EntryPointSymbol>DriverEntry</EntryPointSymbol>
+      <GenerateManifest>false</GenerateManifest>
+      <AdditionalOptions>/MANIFEST:NO %(AdditionalOptions)</AdditionalOptions>
+    </Link>
+    <Inf>
+      <TimeStamp>0.1.1.0</TimeStamp>
+    </Inf>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="CampusNetTrafficNet.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="CampusNetTrafficNet.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <Inf Include="CampusNetTrafficNet.inf" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="packages.config" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

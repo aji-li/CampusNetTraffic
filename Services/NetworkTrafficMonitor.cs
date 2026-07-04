@@ -1,4 +1,7 @@
-using System.Net.NetworkInformation;
+using System.ComponentModel;
+using System.IO;
+using System.IO.Pipes;
+using System.Text.Json;
 using CampusNetTraffic.Models;
 
 namespace CampusNetTraffic.Services;
@@ -20,11 +23,11 @@ public sealed class NetworkTrafficMonitor
 
     public IReadOnlyList<NetworkAdapterOption> GetAdapters()
     {
-        return NetworkInterface.GetAllNetworkInterfaces()
-            .Where(IsUsableAdapter)
-            .Select(adapter => new NetworkAdapterOption(
-                adapter.Id,
-                $"{adapter.Name} ({adapter.NetworkInterfaceType})"))
+        return NativeNetworkInterfaces.GetRows()
+            .Where(IsUsableInterface)
+            .Select(row => new NetworkAdapterOption(
+                FormatInterfaceId(row.InterfaceGuid),
+                $"{row.Name} ({FormatInterfaceType(row.Type)})"))
             .OrderBy(adapter => adapter.Name)
             .ToList();
     }
@@ -32,7 +35,7 @@ public sealed class NetworkTrafficMonitor
     public TrafficSample Capture()
     {
         var now = DateTimeOffset.Now;
-        var (received, sent) = ReadActiveInterfaceBytes(_selectedAdapterId);
+        var (received, sent) = TryReadServiceBytes(_selectedAdapterId) ?? ReadActiveInterfaceBytes(_selectedAdapterId);
 
         var downloadRate = 0d;
         var uploadRate = 0d;
@@ -56,31 +59,93 @@ public sealed class NetworkTrafficMonitor
         long received = 0;
         long sent = 0;
 
-        foreach (var adapter in NetworkInterface.GetAllNetworkInterfaces())
+        foreach (var row in NativeNetworkInterfaces.GetRows())
         {
-            if (!IsUsableAdapter(adapter))
+            if (!IsUsableInterface(row))
             {
                 continue;
             }
 
-            if (!string.IsNullOrWhiteSpace(selectedAdapterId) && adapter.Id != selectedAdapterId)
+            if (!string.IsNullOrWhiteSpace(selectedAdapterId)
+                && !string.Equals(FormatInterfaceId(row.InterfaceGuid), selectedAdapterId, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
 
-            var stats = adapter.GetIPv4Statistics();
-            received += stats.BytesReceived;
-            sent += stats.BytesSent;
+            received += unchecked((long)Math.Min(row.InOctets, long.MaxValue));
+            sent += unchecked((long)Math.Min(row.OutOctets, long.MaxValue));
         }
 
         return (received, sent);
     }
 
-    private static bool IsUsableAdapter(NetworkInterface adapter)
+    private static (long received, long sent)? TryReadServiceBytes(string? selectedAdapterId)
     {
-        return adapter.OperationalStatus == OperationalStatus.Up
-            && adapter.NetworkInterfaceType is not NetworkInterfaceType.Loopback
-            && adapter.NetworkInterfaceType is not NetworkInterfaceType.Tunnel;
+        try
+        {
+            using var pipe = new NamedPipeClientStream(
+                ".",
+                TrafficPipeProtocol.PipeName,
+                PipeDirection.InOut,
+                PipeOptions.Asynchronous);
+
+            pipe.Connect(TrafficPipeProtocol.ConnectTimeoutMilliseconds);
+            using var writer = new StreamWriter(pipe, TrafficPipeProtocol.Encoding, leaveOpen: true) { AutoFlush = true };
+            using var reader = new StreamReader(pipe, TrafficPipeProtocol.Encoding, leaveOpen: true);
+
+            writer.WriteLine(TrafficPipeProtocol.CreateGetCountersCommand(selectedAdapterId));
+            var response = reader.ReadLine();
+            if (string.IsNullOrWhiteSpace(response))
+            {
+                return null;
+            }
+
+            var counters = JsonSerializer.Deserialize<TrafficCounterResponse>(response);
+            return counters is null ? null : (counters.TotalReceivedBytes, counters.TotalSentBytes);
+        }
+        catch (Win32Exception)
+        {
+            return null;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (TimeoutException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static bool IsUsableInterface(NativeNetworkInterfaces.InterfaceRow row)
+    {
+        return row.OperStatus == NativeNetworkInterfaces.IfOperStatus.Up
+            && !row.IsFilterInterface
+            && row.Type is not NativeNetworkInterfaces.IfType.SoftwareLoopback
+            && row.Type is not NativeNetworkInterfaces.IfType.Tunnel;
+    }
+
+    private static string FormatInterfaceId(Guid interfaceGuid) => interfaceGuid.ToString("B");
+
+    private static string FormatInterfaceType(NativeNetworkInterfaces.IfType type)
+    {
+        return type switch
+        {
+            NativeNetworkInterfaces.IfType.EthernetCsmacd => "Ethernet",
+            NativeNetworkInterfaces.IfType.Ieee80211 => "Wi-Fi",
+            NativeNetworkInterfaces.IfType.Ppp => "PPP",
+            NativeNetworkInterfaces.IfType.Tunnel => "Tunnel",
+            NativeNetworkInterfaces.IfType.SoftwareLoopback => "Loopback",
+            _ => type.ToString()
+        };
     }
 }
 
